@@ -391,6 +391,17 @@ export type MealInput = {
   date?: string;
 };
 
+export type GoalInput = {
+  title: string;
+  description?: string;
+  category?: GoalCategory;
+  target?: number;
+  progress?: number;
+  unit?: string;
+  deadline?: string;
+  completed?: boolean;
+};
+
 /* =========================================================
    CONTEXT TYPE
 ========================================================= */
@@ -426,9 +437,24 @@ export interface LifeOSContextType {
     task: TaskInput
   ) => Promise<void>;
 
+  addGoal: (
+    goal: GoalInput
+  ) => Promise<void>;
+
+  updateGoal: (
+    id: string,
+    goal: Partial<GoalInput>
+  ) => Promise<void>;
+
+  deleteGoal: (
+    id: string
+  ) => Promise<void>;
+  
   toggleTask: (
     id: string
   ) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  updateTask: (id: string, input: TaskInput) => Promise<void>;
 
   toggleTopicStatus: (
     ...args: string[]
@@ -2310,6 +2336,400 @@ export function LifeOSProvider({
       );
     };
 
+const deleteTask = async (id: string) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('tasks')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+
+  setTasks((previous) =>
+    previous.filter((task) => task.id !== id)
+  );
+};
+
+const updateTask = async (id: string, input: TaskInput) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('tasks')
+    .update({
+      title: input.title,
+      description: input.description ?? null,
+      completed: input.completed ?? false,
+      priority: input.priority ?? 'medium',
+      due_date: input.dueDate ?? null,
+      category: input.category ?? 'personal',
+      estimated_minutes: input.estimatedMinutes ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) {
+    console.error('Error updating task:', error);
+    throw error;
+  }
+
+  setTasks((prev) =>
+    prev.map((task) =>
+      task.id === id
+        ? {
+            ...task,
+            title: input.title,
+            description: input.description,
+            completed: input.completed ?? task.completed,
+            priority: input.priority ?? task.priority,
+            dueDate: input.dueDate ?? task.dueDate,
+            category: input.category ?? task.category,
+            estimatedMinutes:
+              input.estimatedMinutes ?? task.estimatedMinutes,
+          }
+        : task
+    )
+  );
+};
+
+  /* =======================================================
+     GOALS
+  ======================================================= */
+
+  const addGoal = async (
+    goal: GoalInput
+  ) => {
+    if (!user) {
+      return;
+    }
+
+    const target = Number(goal.target ?? 0);
+    const progress = Number(goal.progress ?? 0);
+
+    const completed =
+      goal.completed ??
+      (target > 0 && progress >= target);
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from('goals')
+      .insert({
+        user_id: user.id,
+
+        title: goal.title,
+
+        description:
+          goal.description ??
+          null,
+
+        category:
+          goal.category ??
+          'personal',
+
+        target,
+
+        progress,
+
+        unit:
+          goal.unit ??
+          null,
+
+        deadline:
+          goal.deadline ??
+          null,
+
+        completed,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const newGoal: Goal = {
+      id: data.id,
+
+      title:
+        data.title,
+
+      description:
+        data.description ??
+        undefined,
+
+      category:
+        data.category ??
+        'personal',
+
+      target:
+        Number(
+          data.target ??
+            0
+        ),
+
+      progress:
+        Number(
+          data.progress ??
+            0
+        ),
+
+      targetValue:
+        Number(
+          data.target ??
+            0
+        ),
+
+      currentValue:
+        Number(
+          data.progress ??
+            0
+        ),
+
+      unit:
+        data.unit ??
+        undefined,
+
+      deadline:
+        data.deadline ??
+        undefined,
+
+      completed:
+        Boolean(
+          data.completed
+        ),
+    };
+
+    setGoals(
+      (previous) => [
+        newGoal,
+        ...previous,
+      ]
+    );
+  };
+
+  const updateGoal = async (
+    id: string,
+    updates: Partial<GoalInput>
+  ) => {
+    if (!user) {
+      return;
+    }
+
+    const existingGoal =
+      goals.find(
+        (goal) =>
+          goal.id === id
+      );
+
+    if (!existingGoal) {
+      return;
+    }
+
+    const target =
+      updates.target !== undefined
+        ? Number(updates.target)
+        : existingGoal.target;
+
+    const progress =
+      updates.progress !== undefined
+        ? Number(updates.progress)
+        : existingGoal.progress;
+
+    const completed =
+      updates.completed !== undefined
+        ? updates.completed
+        : target > 0 &&
+          progress >= target;
+
+    const updatePayload: Record<
+      string,
+      unknown
+    > = {
+      updated_at:
+        new Date().toISOString(),
+    };
+
+    if (
+      updates.title !==
+      undefined
+    ) {
+      updatePayload.title =
+        updates.title;
+    }
+
+    if (
+      updates.description !==
+      undefined
+    ) {
+      updatePayload.description =
+        updates.description || null;
+    }
+
+    if (
+      updates.category !==
+      undefined
+    ) {
+      updatePayload.category =
+        updates.category;
+    }
+
+    if (
+      updates.target !==
+      undefined
+    ) {
+      updatePayload.target =
+        target;
+    }
+
+    if (
+      updates.progress !==
+      undefined
+    ) {
+      updatePayload.progress =
+        progress;
+    }
+
+    if (
+      updates.unit !==
+      undefined
+    ) {
+      updatePayload.unit =
+        updates.unit || null;
+    }
+
+    if (
+      updates.deadline !==
+      undefined
+    ) {
+      updatePayload.deadline =
+        updates.deadline || null;
+    }
+
+    updatePayload.completed =
+      completed;
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from('goals')
+      .update(updatePayload)
+      .eq(
+        'id',
+        id
+      )
+      .eq(
+        'user_id',
+        user.id
+      )
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const updatedGoal: Goal = {
+      id: data.id,
+
+      title:
+        data.title,
+
+      description:
+        data.description ??
+        undefined,
+
+      category:
+        data.category ??
+        'personal',
+
+      target:
+        Number(
+          data.target ??
+            0
+        ),
+
+      progress:
+        Number(
+          data.progress ??
+            0
+        ),
+
+      targetValue:
+        Number(
+          data.target ??
+            0
+        ),
+
+      currentValue:
+        Number(
+          data.progress ??
+            0
+        ),
+
+      unit:
+        data.unit ??
+        undefined,
+
+      deadline:
+        data.deadline ??
+        undefined,
+
+      completed:
+        Boolean(
+          data.completed
+        ),
+    };
+
+    setGoals(
+      (previous) =>
+        previous.map(
+          (goal) =>
+            goal.id === id
+              ? updatedGoal
+              : goal
+        )
+    );
+  };
+
+  const deleteGoal = async (
+    id: string
+  ) => {
+    if (!user) {
+      return;
+    }
+
+    const {
+      error,
+    } = await supabase
+      .from('goals')
+      .delete()
+      .eq(
+        'id',
+        id
+      )
+      .eq(
+        'user_id',
+        user.id
+      );
+
+    if (error) {
+      throw error;
+    }
+
+    setGoals(
+      (previous) =>
+        previous.filter(
+          (goal) =>
+            goal.id !== id
+        )
+    );
+  };
+
   /* =======================================================
      TOPICS
   ======================================================= */
@@ -3881,7 +4301,17 @@ export function LifeOSProvider({
 
         addTask,
 
+                addGoal,
+
+        updateGoal,
+
+        deleteGoal,
+
         toggleTask,
+
+        deleteTask,
+
+        updateTask,
 
         toggleTopicStatus,
 

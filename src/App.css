@@ -1,184 +1,506 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
+/* =========================================================
+   LIFEOS — GLOBAL UI / UX SYSTEM
+   Round 2/4
+   ========================================================= */
 
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  color-scheme: light;
 }
 
-.hero {
+html.dark {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #f8fafc;
+}
+
+html.dark {
+  background: #020617;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f8fafc;
+  color: #0f172a;
+  overflow-x: hidden;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+html.dark body {
+  background: #020617;
+  color: #f8fafc;
+}
+
+/* =========================================================
+   SELECTION
+   ========================================================= */
+
+::selection {
+  background: rgba(15, 23, 42, 0.14);
+  color: #0f172a;
+}
+
+html.dark ::selection {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+html.dark * {
+  scrollbar-color: #334155 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+
+button {
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Prevent ugly mobile tap flash */
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =========================================================
+   LINKS
+   ========================================================= */
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* =========================================================
+   INPUTS
+   ========================================================= */
+
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0.6;
+}
+
+input[type="date"],
+input[type="time"] {
+  color-scheme: light;
+}
+
+html.dark input[type="date"],
+html.dark input[type="time"] {
+  color-scheme: dark;
+}
+
+/* =========================================================
+   FOCUS ACCESSIBILITY
+   ========================================================= */
+
+:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 2px;
+}
+
+html.dark :focus-visible {
+  outline-color: #94a3b8;
+}
+
+/* =========================================================
+   COMMON LIFEOS CARD POLISH
+   ========================================================= */
+
+.lifeos-card {
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 24px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.03),
+    0 8px 24px rgba(15, 23, 42, 0.035);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.lifeos-card:hover {
+  border-color: rgba(203, 213, 225, 0.95);
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.035),
+    0 12px 30px rgba(15, 23, 42, 0.055);
+}
+
+html.dark .lifeos-card {
+  border-color: rgba(30, 41, 59, 0.95);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 12px 30px rgba(0, 0, 0, 0.12);
+}
+
+html.dark .lifeos-card:hover {
+  border-color: rgba(51, 65, 85, 0.95);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.24),
+    0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+/* =========================================================
+   MODAL BACKDROP
+   ========================================================= */
+
+.lifeos-modal-backdrop {
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+html.dark .lifeos-modal-backdrop {
+  background: rgba(2, 6, 23, 0.72);
+}
+
+/* =========================================================
+   MODAL
+   ========================================================= */
+
+.lifeos-modal {
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: #ffffff;
+  border-radius: 28px;
+  box-shadow:
+    0 20px 60px rgba(15, 23, 42, 0.16),
+    0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+html.dark .lifeos-modal {
+  border-color: #1e293b;
+  background: #0f172a;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.42),
+    0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* =========================================================
+   SUBTLE INTERACTION
+   ========================================================= */
+
+.lifeos-interactive {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.lifeos-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.lifeos-interactive:active {
+  transform: translateY(0);
+}
+
+/* =========================================================
+   PROGRESS BARS
+   ========================================================= */
+
+.lifeos-progress {
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.lifeos-progress > * {
+  border-radius: inherit;
+  transition: width 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html.dark .lifeos-progress {
+  background: #1e293b;
+}
+
+/* =========================================================
+   SKELETON LOADING
+   ========================================================= */
+
+.lifeos-skeleton {
   position: relative;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 12px;
+}
 
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
+.lifeos-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  animation: lifeos-skeleton 1.35s infinite;
+}
 
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
+html.dark .lifeos-skeleton {
+  background: #1e293b;
+}
 
-  .framework,
-  .vite {
-    position: absolute;
-  }
+html.dark .lifeos-skeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
+}
 
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
+@keyframes lifeos-skeleton {
+  100% {
+    transform: translateX(100%);
   }
 }
 
-#center {
-  display: flex;
-  flex-direction: column;
-  gap: 25px;
-  place-content: center;
-  place-items: center;
-  flex-grow: 1;
+/* =========================================================
+   FADE / SLIDE ANIMATIONS
+   ========================================================= */
 
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
+.lifeos-fade-in {
+  animation: lifeos-fade-in 220ms ease-out both;
+}
+
+@keyframes lifeos-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
-#next-steps {
-  display: flex;
-  border-top: 1px solid var(--border);
-  text-align: left;
+.lifeos-slide-up {
+  animation: lifeos-slide-up 280ms ease-out both;
+}
 
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
+@keyframes lifeos-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
 
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-#docs {
-  border-right: 1px solid var(--border);
+/* =========================================================
+   TOAST / STATUS
+   ========================================================= */
 
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
+.lifeos-status-success {
+  color: #059669;
+}
+
+.lifeos-status-error {
+  color: #dc2626;
+}
+
+html.dark .lifeos-status-success {
+  color: #34d399;
+}
+
+html.dark .lifeos-status-error {
+  color: #f87171;
+}
+
+/* =========================================================
+   DASHBOARD METRIC NUMBERS
+   ========================================================= */
+
+.lifeos-metric {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+/* =========================================================
+   TABULAR NUMBERS
+   ========================================================= */
+
+.lifeos-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* =========================================================
+   MOBILE BOTTOM NAV
+   ========================================================= */
+
+.lifeos-mobile-nav {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 767px) {
+  .lifeos-mobile-nav {
+    min-height: calc(64px + env(safe-area-inset-bottom));
   }
 }
 
-#next-steps ul {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  gap: 8px;
-  margin: 32px 0 0;
+/* =========================================================
+   SAFE AREA
+   ========================================================= */
 
-  .logo {
-    height: 18px;
-  }
+.lifeos-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
 
+.lifeos-safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* =========================================================
+   MOBILE TOUCH TARGETS
+   ========================================================= */
+
+@media (max-width: 767px) {
+  button,
   a {
-    color: var(--text-h);
+    touch-action: manipulation;
+  }
+
+  input,
+  select,
+  textarea {
     font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
   }
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
-}
+/* =========================================================
+   TABLET / DESKTOP CONTENT WIDTH
+   ========================================================= */
 
-.ticks {
-  position: relative;
+.lifeos-content {
   width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
+/* =========================================================
+   REDUCED MOTION
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
+}
+
+/* =========================================================
+   PRINT
+   ========================================================= */
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  button,
+  nav,
+  aside {
+    display: none !important;
   }
 }
