@@ -24,6 +24,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -141,6 +142,15 @@ const formatShortDate = (value: string) => {
     day: 'numeric',
     month: 'short',
   });
+};
+
+const normalizeActivityDate = (value: unknown) => {
+  if (!value) return '';
+
+  const raw = String(value);
+  const match = raw.match(/^\d{4}-\d{2}-\d{2}/);
+
+  return match ? match[0] : raw;
 };
 
 const formatDuration = (seconds: number) => {
@@ -556,11 +566,15 @@ export default function FitnessView() {
   const [selectedDate, setSelectedDate] =
     useState(getLocalDate());
 
+  const loadRequestIdRef = useRef(0);
+
   const loadData = useCallback(async () => {
     if (!user) {
       setLoading(false);
       return;
     }
+
+    const requestId = ++loadRequestIdRef.current;
 
     setLoading(true);
 
@@ -608,6 +622,10 @@ export default function FitnessView() {
           .eq('id', user.id)
           .maybeSingle(),
       ]);
+
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
 
       if (!runsResult.error) {
         setRuns((runsResult.data ?? []) as Run[]);
@@ -666,7 +684,9 @@ export default function FitnessView() {
       console.error('Fitness data load error:', error);
       setErrorMessage(getErrorMessage(error));
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [user]);
 
@@ -674,30 +694,48 @@ export default function FitnessView() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const handleDataChange = () => {
+      void loadData();
+    };
+
+    window.addEventListener(
+      'lifeos-data-changed',
+      handleDataChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        'lifeos-data-changed',
+        handleDataChange,
+      );
+    };
+  }, [loadData]);
+
   const selectedRuns = useMemo(
     () =>
-      runs.filter((run) => run.date === selectedDate),
+      runs.filter((run) => normalizeActivityDate(run.date) === selectedDate),
     [runs, selectedDate],
   );
 
   const selectedWorkouts = useMemo(
     () =>
       workouts.filter(
-        (workout) => workout.date === selectedDate,
+        (workout) => normalizeActivityDate(workout.date) === selectedDate,
       ),
     [workouts, selectedDate],
   );
 
   const selectedMeals = useMemo(
     () =>
-      meals.filter((meal) => meal.date === selectedDate),
+      meals.filter((meal) => normalizeActivityDate(meal.date) === selectedDate),
     [meals, selectedDate],
   );
 
   const selectedWaterLogs = useMemo(
     () =>
       waterLogs.filter(
-        (log) => log.date === selectedDate,
+        (log) => normalizeActivityDate(log.date) === selectedDate,
       ),
     [waterLogs, selectedDate],
   );
@@ -1272,7 +1310,7 @@ export default function FitnessView() {
     try {
       const payload = {
         user_id: user.id,
-        meal_type: mealForm.mealType,
+        meal_type: mealForm.mealType.toLowerCase(),
         name: mealForm.name.trim(),
         calories:
           Number.isFinite(calories)
@@ -2828,8 +2866,6 @@ export default function FitnessView() {
               'Lunch',
               'Dinner',
               'Snack',
-              'Pre-workout',
-              'Post-workout',
             ]}
           />
 

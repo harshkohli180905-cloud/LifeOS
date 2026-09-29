@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -87,10 +88,28 @@ function parseLocalDate(value: string) {
 }
 
 function addDays(date: string, amount: number) {
-  const next = parseLocalDate(date);
-  next.setDate(next.getDate() + amount);
+  const [year, month, day] = date
+    .split('-')
+    .map(Number);
 
-  return getLocalDate(next);
+  const next = new Date(
+    Date.UTC(year, month - 1, day + amount),
+  );
+
+  return [
+    next.getUTCFullYear(),
+    String(next.getUTCMonth() + 1).padStart(2, '0'),
+    String(next.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function normalizeActivityDate(value: unknown) {
+  if (!value) return '';
+
+  const raw = String(value);
+  const match = raw.match(/^\d{4}-\d{2}-\d{2}/);
+
+  return match ? match[0] : raw;
 }
 
 function formatDateLabel(date: string) {
@@ -384,6 +403,8 @@ export default function AnalyticsView({
   const [error, setError] =
     useState<string | null>(null);
 
+  const analyticsRequestIdRef = useRef(0);
+
   const [mobileMetric, setMobileMetric] =
     useState<
       | 'study'
@@ -406,6 +427,8 @@ export default function AnalyticsView({
         setLoading(false);
         return;
       }
+
+      const requestId = ++analyticsRequestIdRef.current;
 
       setLoading(true);
       setError(null);
@@ -447,37 +470,33 @@ export default function AnalyticsView({
             .select(
               'distance_km, duration_seconds, date',
             )
-            .eq('user_id', user.id)
-            .gte('date', startDate)
-            .lte('date', endDate),
+            .eq('user_id', user.id),
 
           supabase
             .from('workouts')
             .select(
               'duration_seconds, date',
             )
-            .eq('user_id', user.id)
-            .gte('date', startDate)
-            .lte('date', endDate),
+            .eq('user_id', user.id),
 
           supabase
             .from('water_logs')
             .select(
               'amount_ml, date',
             )
-            .eq('user_id', user.id)
-            .gte('date', startDate)
-            .lte('date', endDate),
+            .eq('user_id', user.id),
 
           supabase
             .from('meals')
             .select(
               'calories, protein, date',
             )
-            .eq('user_id', user.id)
-            .gte('date', startDate)
-            .lte('date', endDate),
+            .eq('user_id', user.id),
         ]);
+
+        if (requestId !== analyticsRequestIdRef.current) {
+          return;
+        }
 
         const errors = [
           studyResult.error,
@@ -549,7 +568,7 @@ export default function AnalyticsView({
 
         runRows.forEach((row) => {
           const item =
-            map.get(row.date);
+            map.get(normalizeActivityDate(row.date));
 
           if (!item) {
             return;
@@ -568,7 +587,7 @@ export default function AnalyticsView({
         workoutRows.forEach(
           (row) => {
             const item =
-              map.get(row.date);
+              map.get(normalizeActivityDate(row.date));
 
             if (!item) {
               return;
@@ -588,7 +607,7 @@ export default function AnalyticsView({
 
         waterRows.forEach((row) => {
           const item =
-            map.get(row.date);
+            map.get(normalizeActivityDate(row.date));
 
           if (!item) {
             return;
@@ -606,7 +625,7 @@ export default function AnalyticsView({
 
         mealRows.forEach((row) => {
           const item =
-            map.get(row.date);
+            map.get(normalizeActivityDate(row.date));
 
           if (!item) {
             return;
@@ -638,7 +657,9 @@ export default function AnalyticsView({
 
         setDays([]);
       } finally {
-        setLoading(false);
+        if (requestId === analyticsRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [
@@ -650,8 +671,26 @@ export default function AnalyticsView({
   );
 
   useEffect(() => {
-  void loadAnalytics();
-}, [loadAnalytics, refreshVersion]);
+    void loadAnalytics();
+  }, [loadAnalytics, refreshVersion]);
+
+  useEffect(() => {
+    const handleDataChange = () => {
+      void loadAnalytics();
+    };
+
+    window.addEventListener(
+      'lifeos-data-changed',
+      handleDataChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        'lifeos-data-changed',
+        handleDataChange,
+      );
+    };
+  }, [loadAnalytics]);
 
   const goPrevious = () => {
     setRangeStart(
