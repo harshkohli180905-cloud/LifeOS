@@ -1,4 +1,9 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
 import {
   X,
   BookOpen,
@@ -13,6 +18,7 @@ import {
 
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { getLocalDate } from '../lib/date';
 
 type QuickLogType =
   | 'study'
@@ -25,32 +31,61 @@ type QuickLogModalProps = {
   isOpen: boolean;
   onClose: () => void;
   initialType?: QuickLogType;
+
+  /*
+   * App can use this to immediately refresh
+   * dashboard data after a successful save.
+   */
+  onSaved?: () => void | Promise<void>;
 };
 
-const getToday = () => {
-  const now = new Date();
 
-  const year = now.getFullYear();
-  const month = String(
-    now.getMonth() + 1
-  ).padStart(2, '0');
-  const day = String(
-    now.getDate()
-  ).padStart(2, '0');
 
-  return `${year}-${month}-${day}`;
+const toPositiveNumber = (
+  value: string,
+) => {
+  const number = Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return null;
+  }
+
+  return number;
+};
+
+const toNonNegativeNumber = (
+  value: string,
+) => {
+  if (value.trim() === '') {
+    return 0;
+  }
+
+  const number = Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number < 0
+  ) {
+    return null;
+  }
+
+  return number;
 };
 
 function QuickLogModal({
   isOpen,
   onClose,
   initialType = 'study',
+  onSaved,
 }: QuickLogModalProps) {
   const { user } = useAuth();
 
   const [type, setType] =
     useState<QuickLogType>(
-      initialType
+      initialType,
     );
 
   const [saving, setSaving] =
@@ -59,74 +94,127 @@ function QuickLogModal({
   const [saved, setSaved] =
     useState(false);
 
-  /* Study */
+  const closeTimerRef =
+    useRef<number | null>(null);
+
+  /* ---------------- Study ---------------- */
+
   const [studyName, setStudyName] =
     useState('');
+
   const [studyMinutes, setStudyMinutes] =
     useState('');
 
-  /* Run */
+  /* ---------------- Run ---------------- */
+
   const [runDistance, setRunDistance] =
     useState('');
+
   const [runMinutes, setRunMinutes] =
     useState('');
+
   const [runCalories, setRunCalories] =
     useState('');
 
-  /* Workout */
+  /* ---------------- Workout ---------------- */
+
   const [workoutName, setWorkoutName] =
     useState('');
+
   const [workoutMinutes, setWorkoutMinutes] =
     useState('');
 
-  /* Water */
+  /* ---------------- Water ---------------- */
+
   const [waterAmount, setWaterAmount] =
     useState('250');
 
-  /* Meal */
+  /* ---------------- Meal ---------------- */
+
   const [mealType, setMealType] =
     useState('breakfast');
+
   const [mealName, setMealName] =
     useState('');
+
   const [mealCalories, setMealCalories] =
     useState('');
+
   const [mealProtein, setMealProtein] =
     useState('');
+
   const [mealCarbs, setMealCarbs] =
     useState('');
+
   const [mealFat, setMealFat] =
     useState('');
 
+  /*
+   * Sync selected quick-log type whenever
+   * the modal is opened from a different action.
+   */
   useEffect(() => {
-    if (isOpen) {
-      setType(initialType);
-      setSaved(false);
+    if (!isOpen) {
+      return;
     }
-  }, [isOpen, initialType]);
 
+    setType(initialType);
+    setSaved(false);
+  }, [
+    isOpen,
+    initialType,
+  ]);
+
+  /*
+   * Cleanup delayed close timer.
+   */
   useEffect(() => {
-    if (!isOpen) return;
+    return () => {
+      if (
+        closeTimerRef.current !== null
+      ) {
+        window.clearTimeout(
+          closeTimerRef.current,
+        );
+      }
+    };
+  }, []);
+
+  /*
+   * Escape key.
+   */
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
 
     const handleKeyDown = (
-      event: KeyboardEvent
+      event: KeyboardEvent,
     ) => {
-      if (event.key === 'Escape') {
+      if (
+        event.key === 'Escape' &&
+        !saving
+      ) {
         onClose();
       }
     };
 
     window.addEventListener(
       'keydown',
-      handleKeyDown
+      handleKeyDown,
     );
 
     return () => {
       window.removeEventListener(
         'keydown',
-        handleKeyDown
+        handleKeyDown,
       );
     };
-  }, [isOpen, onClose]);
+  }, [
+    isOpen,
+    saving,
+    onClose,
+  ]);
 
   const resetForm = () => {
     setStudyName('');
@@ -150,31 +238,51 @@ function QuickLogModal({
   };
 
   const closeModal = () => {
-    if (saving) return;
+    if (saving) {
+      return;
+    }
+
+    if (
+      closeTimerRef.current !== null
+    ) {
+      window.clearTimeout(
+        closeTimerRef.current,
+      );
+
+      closeTimerRef.current = null;
+    }
 
     resetForm();
     setSaved(false);
     onClose();
   };
 
+  /* =====================================================
+   * SAVE STUDY
+   * ===================================================== */
+
   const saveStudy = async () => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     const minutes =
-      Number(studyMinutes);
+      toPositiveNumber(
+        studyMinutes,
+      );
 
     if (
       !studyName.trim() ||
-      !minutes ||
-      minutes <= 0
+      minutes === null
     ) {
       return false;
     }
 
     const end = new Date();
+
     const start = new Date(
       end.getTime() -
-        minutes * 60 * 1000
+        minutes * 60 * 1000,
     );
 
     const { error } =
@@ -188,85 +296,111 @@ function QuickLogModal({
           ended_at:
             end.toISOString(),
           duration_seconds:
-            Math.round(minutes * 60),
+            Math.round(
+              minutes * 60,
+            ),
         });
 
     if (error) {
       console.error(
         'Study log error:',
-        error
+        error,
       );
+
       return false;
     }
 
     return true;
   };
 
+  /* =====================================================
+   * SAVE RUN
+   * ===================================================== */
+
   const saveRun = async () => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     const distance =
-      Number(runDistance);
+      toPositiveNumber(
+        runDistance,
+      );
+
     const minutes =
-      Number(runMinutes);
+      toPositiveNumber(
+        runMinutes,
+      );
+
     const calories =
-      Number(runCalories) || 0;
+      toNonNegativeNumber(
+        runCalories,
+      );
 
     if (
-      !distance ||
-      distance <= 0 ||
-      !minutes ||
-      minutes <= 0
+      distance === null ||
+      minutes === null ||
+      calories === null
     ) {
       return false;
     }
 
     const durationSeconds =
-      Math.round(minutes * 60);
+      Math.round(
+        minutes * 60,
+      );
 
     const pace =
-      distance > 0
-        ? Number(
-            (
-              minutes / distance
-            ).toFixed(2)
-          )
-        : null;
+      Number(
+        (
+          minutes / distance
+        ).toFixed(2),
+      );
 
     const { error } =
       await supabase
         .from('runs')
         .insert({
           user_id: user.id,
-          date: getToday(),
+          date: getLocalDate(),
           distance_km: distance,
           duration_seconds:
             durationSeconds,
           pace,
           calories,
+          notes: null,
+          route_location: null,
         });
 
     if (error) {
       console.error(
         'Run log error:',
-        error
+        error,
       );
+
       return false;
     }
 
     return true;
   };
 
+  /* =====================================================
+   * SAVE WORKOUT
+   * ===================================================== */
+
   const saveWorkout = async () => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     const minutes =
-      Number(workoutMinutes);
+      toPositiveNumber(
+        workoutMinutes,
+      );
 
     if (
       !workoutName.trim() ||
-      !minutes ||
-      minutes <= 0
+      minutes === null
     ) {
       return false;
     }
@@ -277,32 +411,41 @@ function QuickLogModal({
         .insert({
           user_id: user.id,
           name: workoutName.trim(),
-          date: getToday(),
+          date: getLocalDate(),
           duration_seconds:
-            Math.round(minutes * 60),
+            Math.round(
+              minutes * 60,
+            ),
+          notes: null,
         });
 
     if (error) {
       console.error(
         'Workout log error:',
-        error
+        error,
       );
+
       return false;
     }
 
     return true;
   };
 
+  /* =====================================================
+   * SAVE WATER
+   * ===================================================== */
+
   const saveWater = async () => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     const amount =
-      Number(waterAmount);
+      toPositiveNumber(
+        waterAmount,
+      );
 
-    if (
-      !amount ||
-      amount <= 0
-    ) {
+    if (amount === null) {
       return false;
     }
 
@@ -311,25 +454,63 @@ function QuickLogModal({
         .from('water_logs')
         .insert({
           user_id: user.id,
-          amount_ml: amount,
-          date: getToday(),
+          amount_ml: Math.round(
+            amount,
+          ),
+          date: getLocalDate(),
         });
 
     if (error) {
       console.error(
         'Water log error:',
-        error
+        error,
       );
+
       return false;
     }
 
     return true;
   };
 
+  /* =====================================================
+   * SAVE MEAL
+   * ===================================================== */
+
   const saveMeal = async () => {
-    if (!user) return false;
+    if (!user) {
+      return false;
+    }
 
     if (!mealName.trim()) {
+      return false;
+    }
+
+    const calories =
+      toNonNegativeNumber(
+        mealCalories,
+      );
+
+    const protein =
+      toNonNegativeNumber(
+        mealProtein,
+      );
+
+    const carbs =
+      toNonNegativeNumber(
+        mealCarbs,
+      );
+
+    const fat =
+      toNonNegativeNumber(
+        mealFat,
+      );
+
+    if (
+      calories === null ||
+      protein === null ||
+      carbs === null ||
+      fat === null
+    ) {
       return false;
     }
 
@@ -340,30 +521,37 @@ function QuickLogModal({
           user_id: user.id,
           meal_type: mealType,
           name: mealName.trim(),
-          calories:
-            Number(mealCalories) || 0,
-          protein:
-            Number(mealProtein) || 0,
-          carbs:
-            Number(mealCarbs) || 0,
-          fat:
-            Number(mealFat) || 0,
-          date: getToday(),
+          calories,
+          protein,
+          carbs,
+          fat,
+          date: getLocalDate(),
         });
 
     if (error) {
       console.error(
         'Meal log error:',
-        error
+        error,
       );
+
       return false;
     }
 
     return true;
   };
 
+  /* =====================================================
+   * MAIN SAVE
+   * ===================================================== */
+
   const handleSave = async () => {
-    if (!user || saving) return;
+    if (
+      !user ||
+      saving ||
+      saved
+    ) {
+      return;
+    }
 
     setSaving(true);
     setSaved(false);
@@ -371,48 +559,77 @@ function QuickLogModal({
     let success = false;
 
     try {
-      if (type === 'study') {
-        success = await saveStudy();
+      switch (type) {
+        case 'study':
+          success =
+            await saveStudy();
+          break;
+
+        case 'run':
+          success =
+            await saveRun();
+          break;
+
+        case 'workout':
+          success =
+            await saveWorkout();
+          break;
+
+        case 'water':
+          success =
+            await saveWater();
+          break;
+
+        case 'meal':
+          success =
+            await saveMeal();
+          break;
       }
 
-      if (type === 'run') {
-        success = await saveRun();
+      if (!success) {
+        window.alert(
+          'Please fill all required fields correctly.',
+        );
+
+        return;
       }
 
-      if (type === 'workout') {
-        success =
-          await saveWorkout();
+      /*
+       * Immediately tell App that the DB has changed.
+       */
+      setSaved(true);
+
+      try {
+        await onSaved?.();
+      } catch (refreshError) {
+        /*
+         * The actual DB save succeeded.
+         * A dashboard refresh failure should NOT
+         * make the user think the log failed.
+         */
+        console.error(
+          'Dashboard refresh error:',
+          refreshError,
+        );
       }
 
-      if (type === 'water') {
-        success = await saveWater();
-      }
-
-      if (type === 'meal') {
-        success = await saveMeal();
-      }
-
-      if (success) {
-        setSaved(true);
-
+      closeTimerRef.current =
         window.setTimeout(() => {
+          closeTimerRef.current =
+            null;
+
           resetForm();
           setSaved(false);
           onClose();
-        }, 700);
-      } else {
-        window.alert(
-          'Please fill all required fields correctly.'
-        );
-      }
+        }, 650);
     } catch (error) {
       console.error(
         'Quick log error:',
-        error
+        error,
       );
 
       window.alert(
-        'Something went wrong while saving.'
+        'Something went wrong while saving.',
       );
     } finally {
       setSaving(false);
@@ -456,7 +673,8 @@ function QuickLogModal({
       className="fixed inset-0 z-[110] flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (
-          event.target === event.currentTarget
+          event.target ===
+          event.currentTarget
         ) {
           closeModal();
         }
@@ -464,6 +682,7 @@ function QuickLogModal({
     >
       <div className="max-h-[92vh] w-full max-w-xl overflow-hidden rounded-t-3xl border border-gray-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#151515] sm:rounded-3xl">
         {/* Header */}
+
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-white/10">
           <div>
             <h2 className="text-lg font-bold text-gray-900 dark:text-white">
@@ -477,7 +696,8 @@ function QuickLogModal({
 
           <button
             onClick={closeModal}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-white"
+            disabled={saving}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10 dark:hover:text-white"
             aria-label="Close"
           >
             <X size={19} />
@@ -485,10 +705,13 @@ function QuickLogModal({
         </div>
 
         {/* Tabs */}
+
         <div className="overflow-x-auto border-b border-gray-100 px-3 py-3 dark:border-white/10">
           <div className="flex min-w-max gap-2">
             {tabs.map((tab) => {
-              const Icon = tab.icon;
+              const Icon =
+                tab.icon;
+
               const active =
                 type === tab.id;
 
@@ -498,11 +721,12 @@ function QuickLogModal({
                   onClick={() =>
                     setType(tab.id)
                   }
+                  disabled={saving}
                   className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${
                     active
                       ? 'bg-black text-white dark:bg-white dark:text-black'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-white/5 dark:text-gray-400 dark:hover:bg-white/10'
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   <Icon size={15} />
                   {tab.label}
@@ -513,12 +737,15 @@ function QuickLogModal({
         </div>
 
         {/* Form */}
+
         <div className="max-h-[65vh] overflow-y-auto p-5">
           {type === 'study' && (
             <StudyForm
               name={studyName}
               minutes={studyMinutes}
-              setName={setStudyName}
+              setName={
+                setStudyName
+              }
               setMinutes={
                 setStudyMinutes
               }
@@ -527,9 +754,15 @@ function QuickLogModal({
 
           {type === 'run' && (
             <RunForm
-              distance={runDistance}
-              minutes={runMinutes}
-              calories={runCalories}
+              distance={
+                runDistance
+              }
+              minutes={
+                runMinutes
+              }
+              calories={
+                runCalories
+              }
               setDistance={
                 setRunDistance
               }
@@ -544,8 +777,12 @@ function QuickLogModal({
 
           {type === 'workout' && (
             <WorkoutForm
-              name={workoutName}
-              minutes={workoutMinutes}
+              name={
+                workoutName
+              }
+              minutes={
+                workoutMinutes
+              }
               setName={
                 setWorkoutName
               }
@@ -557,7 +794,9 @@ function QuickLogModal({
 
           {type === 'water' && (
             <WaterForm
-              amount={waterAmount}
+              amount={
+                waterAmount
+              }
               setAmount={
                 setWaterAmount
               }
@@ -566,11 +805,19 @@ function QuickLogModal({
 
           {type === 'meal' && (
             <MealForm
-              mealType={mealType}
+              mealType={
+                mealType
+              }
               name={mealName}
-              calories={mealCalories}
-              protein={mealProtein}
-              carbs={mealCarbs}
+              calories={
+                mealCalories
+              }
+              protein={
+                mealProtein
+              }
+              carbs={
+                mealCarbs
+              }
               fat={mealFat}
               setMealType={
                 setMealType
@@ -587,15 +834,20 @@ function QuickLogModal({
               setCarbs={
                 setMealCarbs
               }
-              setFat={setMealFat}
+              setFat={
+                setMealFat
+              }
             />
           )}
         </div>
 
         {/* Footer */}
+
         <div className="border-t border-gray-100 bg-gray-50/80 p-4 dark:border-white/10 dark:bg-white/[0.02]">
           <button
-            onClick={handleSave}
+            onClick={
+              handleSave
+            }
             disabled={
               saving || saved
             }
@@ -627,7 +879,9 @@ function QuickLogModal({
   );
 }
 
-/* ---------------- Study ---------------- */
+/* =====================================================
+ * STUDY FORM
+ * ===================================================== */
 
 function StudyForm({
   name,
@@ -637,13 +891,19 @@ function StudyForm({
 }: {
   name: string;
   minutes: string;
-  setName: (value: string) => void;
-  setMinutes: (value: string) => void;
+  setName: (
+    value: string,
+  ) => void;
+  setMinutes: (
+    value: string,
+  ) => void;
 }) {
   return (
     <div className="space-y-5">
       <FormIntro
-        icon={<BookOpen size={21} />}
+        icon={
+          <BookOpen size={21} />
+        }
         title="Log study time"
         description="Record a completed study session."
         iconClass="bg-blue-100 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400"
@@ -659,7 +919,9 @@ function StudyForm({
       <Input
         label="Duration"
         value={minutes}
-        onChange={setMinutes}
+        onChange={
+          setMinutes
+        }
         placeholder="e.g. 60"
         type="number"
         suffix="minutes"
@@ -668,7 +930,9 @@ function StudyForm({
   );
 }
 
-/* ---------------- Run ---------------- */
+/* =====================================================
+ * RUN FORM
+ * ===================================================== */
 
 function RunForm({
   distance,
@@ -681,20 +945,25 @@ function RunForm({
   distance: string;
   minutes: string;
   calories: string;
+
   setDistance: (
-    value: string
+    value: string,
   ) => void;
+
   setMinutes: (
-    value: string
+    value: string,
   ) => void;
+
   setCalories: (
-    value: string
+    value: string,
   ) => void;
 }) {
   return (
     <div className="space-y-5">
       <FormIntro
-        icon={<Footprints size={21} />}
+        icon={
+          <Footprints size={21} />
+        }
         title="Log a run"
         description="Record your running activity."
         iconClass="bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400"
@@ -704,7 +973,9 @@ function RunForm({
         <Input
           label="Distance"
           value={distance}
-          onChange={setDistance}
+          onChange={
+            setDistance
+          }
           placeholder="5"
           type="number"
           suffix="km"
@@ -713,7 +984,9 @@ function RunForm({
         <Input
           label="Duration"
           value={minutes}
-          onChange={setMinutes}
+          onChange={
+            setMinutes
+          }
           placeholder="30"
           type="number"
           suffix="min"
@@ -723,7 +996,9 @@ function RunForm({
       <Input
         label="Calories burned"
         value={calories}
-        onChange={setCalories}
+        onChange={
+          setCalories
+        }
         placeholder="Optional"
         type="number"
         suffix="kcal"
@@ -732,7 +1007,9 @@ function RunForm({
   );
 }
 
-/* ---------------- Workout ---------------- */
+/* =====================================================
+ * WORKOUT FORM
+ * ===================================================== */
 
 function WorkoutForm({
   name,
@@ -742,13 +1019,21 @@ function WorkoutForm({
 }: {
   name: string;
   minutes: string;
-  setName: (value: string) => void;
-  setMinutes: (value: string) => void;
+
+  setName: (
+    value: string,
+  ) => void;
+
+  setMinutes: (
+    value: string,
+  ) => void;
 }) {
   return (
     <div className="space-y-5">
       <FormIntro
-        icon={<Dumbbell size={21} />}
+        icon={
+          <Dumbbell size={21} />
+        }
         title="Log a workout"
         description="Record a completed workout session."
         iconClass="bg-purple-100 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400"
@@ -764,7 +1049,9 @@ function WorkoutForm({
       <Input
         label="Duration"
         value={minutes}
-        onChange={setMinutes}
+        onChange={
+          setMinutes
+        }
         placeholder="45"
         type="number"
         suffix="minutes"
@@ -773,15 +1060,18 @@ function WorkoutForm({
   );
 }
 
-/* ---------------- Water ---------------- */
+/* =====================================================
+ * WATER FORM
+ * ===================================================== */
 
 function WaterForm({
   amount,
   setAmount,
 }: {
   amount: string;
+
   setAmount: (
-    value: string
+    value: string,
   ) => void;
 }) {
   const amounts = [
@@ -794,7 +1084,9 @@ function WaterForm({
   return (
     <div className="space-y-5">
       <FormIntro
-        icon={<Droplets size={21} />}
+        icon={
+          <Droplets size={21} />
+        }
         title="Log water"
         description="Track your hydration for today."
         iconClass="bg-cyan-100 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-400"
@@ -822,6 +1114,7 @@ function WaterForm({
                 onClick={() =>
                   setAmount(value)
                 }
+                disabled={false}
                 className={`rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
                   amount === value
                     ? 'border-cyan-500 bg-cyan-50 text-cyan-700 dark:border-cyan-400 dark:bg-cyan-500/10 dark:text-cyan-300'
@@ -830,7 +1123,7 @@ function WaterForm({
               >
                 {value} ml
               </button>
-            )
+            ),
           )}
         </div>
       </div>
@@ -838,7 +1131,9 @@ function WaterForm({
   );
 }
 
-/* ---------------- Meal ---------------- */
+/* =====================================================
+ * MEAL FORM
+ * ===================================================== */
 
 function MealForm({
   mealType,
@@ -860,27 +1155,37 @@ function MealForm({
   protein: string;
   carbs: string;
   fat: string;
+
   setMealType: (
-    value: string
+    value: string,
   ) => void;
-  setName: (value: string) => void;
+
+  setName: (
+    value: string,
+  ) => void;
+
   setCalories: (
-    value: string
+    value: string,
   ) => void;
+
   setProtein: (
-    value: string
+    value: string,
   ) => void;
+
   setCarbs: (
-    value: string
+    value: string,
   ) => void;
+
   setFat: (
-    value: string
+    value: string,
   ) => void;
 }) {
   return (
     <div className="space-y-5">
       <FormIntro
-        icon={<Utensils size={21} />}
+        icon={
+          <Utensils size={21} />
+        }
         title="Log a meal"
         description="Add nutrition information for your meal."
         iconClass="bg-green-100 text-green-600 dark:bg-green-500/10 dark:text-green-400"
@@ -895,7 +1200,7 @@ function MealForm({
           value={mealType}
           onChange={(event) =>
             setMealType(
-              event.target.value
+              event.target.value,
             )
           }
           className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 outline-none focus:border-gray-400 dark:border-white/10 dark:bg-[#202020] dark:text-white"
@@ -903,12 +1208,15 @@ function MealForm({
           <option value="breakfast">
             Breakfast
           </option>
+
           <option value="lunch">
             Lunch
           </option>
+
           <option value="dinner">
             Dinner
           </option>
+
           <option value="snack">
             Snack
           </option>
@@ -926,7 +1234,9 @@ function MealForm({
         <Input
           label="Calories"
           value={calories}
-          onChange={setCalories}
+          onChange={
+            setCalories
+          }
           placeholder="600"
           type="number"
           suffix="kcal"
@@ -935,7 +1245,9 @@ function MealForm({
         <Input
           label="Protein"
           value={protein}
-          onChange={setProtein}
+          onChange={
+            setProtein
+          }
           placeholder="30"
           type="number"
           suffix="g"
@@ -963,7 +1275,9 @@ function MealForm({
   );
 }
 
-/* ---------------- Shared UI ---------------- */
+/* =====================================================
+ * SHARED UI
+ * ===================================================== */
 
 function FormIntro({
   icon,
@@ -1007,9 +1321,11 @@ function Input({
 }: {
   label: string;
   value: string;
+
   onChange: (
-    value: string
+    value: string,
   ) => void;
+
   placeholder?: string;
   type?: string;
   suffix?: string;
@@ -1028,10 +1344,15 @@ function Input({
               ? '0'
               : undefined
           }
+          step={
+            type === 'number'
+              ? 'any'
+              : undefined
+          }
           value={value}
           onChange={(event) =>
             onChange(
-              event.target.value
+              event.target.value,
             )
           }
           placeholder={placeholder}

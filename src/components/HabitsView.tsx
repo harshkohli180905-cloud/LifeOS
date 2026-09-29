@@ -4,37 +4,35 @@ import {
   useMemo,
   useState,
 } from 'react';
-
 import {
-  Archive,
-  CalendarDays,
+  Bell,
   Check,
-  CheckCircle2,
-  
+  ChevronDown,
+  Edit3,
   Flame,
-  MoreHorizontal,
-  Pencil,
+  Loader2,
   Plus,
-  RotateCcw,
-  Search,
+  Save,
   Trash2,
   X,
 } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { getLocalDate } from '../lib/date';
 
 type Habit = {
   id: string;
   name: string;
-  icon: string | null;
+  icon: string;
   frequency: string;
-  target: number | null;
+  target: number;
   reminder_time: string | null;
   active: boolean;
-  streak: number | null;
+  streak: number;
   category: string | null;
-  created_at: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
 type HabitLog = {
@@ -42,6 +40,7 @@ type HabitLog = {
   habit_id: string;
   date: string;
   completed: boolean;
+  created_at?: string;
 };
 
 type HabitForm = {
@@ -53,83 +52,54 @@ type HabitForm = {
   category: string;
 };
 
-const DEFAULT_FORM: HabitForm = {
+const ICONS = [
+  '📚',
+  '💪',
+  '🏃',
+  '🧘',
+  '💧',
+  '🥗',
+  '😴',
+  '🧠',
+  '✍️',
+  '🎯',
+  '🚶',
+  '🏋️',
+  '🚴',
+  '🎸',
+  '💻',
+  '📖',
+];
+
+const CATEGORIES = [
+  'Study',
+  'Fitness',
+  'Health',
+  'Personal',
+  'Productivity',
+  'Lifestyle',
+];
+
+const EMPTY_FORM: HabitForm = {
   name: '',
-  icon: '✓',
+  icon: '🎯',
   frequency: 'daily',
   target: '1',
   reminderTime: '',
   category: 'Personal',
 };
 
-const CATEGORY_OPTIONS = [
-  'Personal',
-  'Study',
-  'Fitness',
-  'Health',
-  'Productivity',
-  'Other',
-];
-
-const ICON_OPTIONS = [
-  '✓',
-  '📚',
-  '🏃',
-  '💪',
-  '💧',
-  '🥗',
-  '🧘',
-  '😴',
-  '🎯',
-  '💻',
-  '📖',
-  '📝',
-];
-
-function getLocalDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(
-    date.getMonth() + 1,
-  ).padStart(2, '0');
-  const day = String(
-    date.getDate(),
-  ).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
-function getDateOffset(days: number) {
-  const date = new Date();
+function shiftDate(dateString: string, days: number) {
+  const date = new Date(`${dateString}T12:00:00`);
   date.setDate(date.getDate() + days);
+
   return getLocalDate(date);
-}
-
-function getLastSevenDays() {
-  return Array.from(
-    { length: 7 },
-    (_, index) => {
-      const date = new Date();
-      date.setDate(
-        date.getDate() - (6 - index),
-      );
-
-      return {
-        date: getLocalDate(date),
-        label: date.toLocaleDateString(
-          'en-IN',
-          {
-            weekday: 'short',
-          },
-        ),
-        day: date.getDate(),
-      };
-    },
-  );
 }
 
 function calculateStreak(
   habitId: string,
   logs: HabitLog[],
+  endDate: string,
 ) {
   const completedDates = new Set(
     logs
@@ -142,20 +112,48 @@ function calculateStreak(
   );
 
   let streak = 0;
-  let cursor = new Date();
+  let currentDate = endDate;
 
-  if (!completedDates.has(getLocalDate(cursor))) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  while (
-    completedDates.has(getLocalDate(cursor))
-  ) {
+  while (completedDates.has(currentDate)) {
     streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
+    currentDate = shiftDate(currentDate, -1);
   }
 
   return streak;
+}
+
+function getCompletedToday(
+  habitId: string,
+  logs: HabitLog[],
+  today: string,
+) {
+  return logs.some(
+    (log) =>
+      log.habit_id === habitId &&
+      log.date === today &&
+      log.completed,
+  );
+}
+
+function formatFrequency(
+  frequency: string,
+  target: number,
+) {
+  if (frequency === 'daily') {
+    return target > 1
+      ? `${target} times / day`
+      : 'Every day';
+  }
+
+  if (frequency === 'weekly') {
+    return target > 1
+      ? `${target} times / week`
+      : 'Every week';
+  }
+
+  return target > 1
+    ? `${target} times`
+    : 'Custom';
 }
 
 export default function HabitsView() {
@@ -167,136 +165,95 @@ export default function HabitsView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [search, setSearch] = useState('');
-  const [showArchived, setShowArchived] =
-    useState(false);
-
-  const [modalOpen, setModalOpen] =
-    useState(false);
-
+  const [showModal, setShowModal] = useState(false);
   const [editingHabit, setEditingHabit] =
     useState<Habit | null>(null);
 
   const [form, setForm] =
-    useState<HabitForm>(DEFAULT_FORM);
+    useState<HabitForm>(EMPTY_FORM);
 
   const [openMenu, setOpenMenu] =
     useState<string | null>(null);
 
-  const lastSevenDays = useMemo(
-    () => getLastSevenDays(),
-    [],
-  );
-
   const today = getLocalDate();
 
-  const loadData = useCallback(
-    async () => {
-      if (!user) return;
+  const loadData = useCallback(async () => {
+    if (!user) return;
 
-      setLoading(true);
+    setLoading(true);
 
-      try {
-        const [
-          habitsResult,
-          logsResult,
-        ] = await Promise.all([
-          supabase
-            .from('habits')
-            .select(
-              'id,name,icon,frequency,target,reminder_time,active,streak,category,created_at',
-            )
-            .eq('user_id', user.id)
-            .order('created_at', {
-              ascending: true,
-            }),
+    try {
+      const startDate = shiftDate(
+        today,
+        -90,
+      );
 
-          supabase
-            .from('habit_logs')
-            .select(
-              'id,habit_id,date,completed',
-            )
-            .eq('user_id', user.id)
-            .gte(
-              'date',
-              getDateOffset(-30),
-            )
-            .order('date', {
-              ascending: false,
-            }),
-        ]);
+      const [
+        habitsResponse,
+        logsResponse,
+      ] = await Promise.all([
+        supabase
+          .from('habits')
+          .select(
+            'id,name,icon,frequency,target,reminder_time,active,streak,category,created_at,updated_at',
+          )
+          .eq('user_id', user.id)
+          .order('created_at', {
+            ascending: true,
+          }),
 
-        if (habitsResult.error) {
-          console.error(
-            'Loading habits failed:',
-            habitsResult.error,
-          );
-        }
+        supabase
+          .from('habit_logs')
+          .select(
+            'id,habit_id,date,completed,created_at',
+          )
+          .eq('user_id', user.id)
+          .gte('date', startDate)
+          .lte('date', today)
+          .order('date', {
+            ascending: false,
+          }),
+      ]);
 
-        if (logsResult.error) {
-          console.error(
-            'Loading habit logs failed:',
-            logsResult.error,
-          );
-        }
-
-        setHabits(
-          (habitsResult.data ??
-            []) as Habit[],
-        );
-
-        setLogs(
-          (logsResult.data ??
-            []) as HabitLog[],
-        );
-      } finally {
-        setLoading(false);
+      if (habitsResponse.error) {
+        throw habitsResponse.error;
       }
-    },
-    [user],
-  );
+
+      if (logsResponse.error) {
+        throw logsResponse.error;
+      }
+
+      const loadedHabits =
+        (habitsResponse.data ?? []) as Habit[];
+
+      const loadedLogs =
+        (logsResponse.data ?? []) as HabitLog[];
+
+      const updatedHabits =
+        loadedHabits.map((habit) => ({
+          ...habit,
+          streak: calculateStreak(
+            habit.id,
+            loadedLogs,
+            today,
+          ),
+        }));
+
+      setHabits(updatedHabits);
+      setLogs(loadedLogs);
+    } catch (error) {
+      console.error(
+        'Failed to load habits:',
+        error,
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [today, user]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel(
-        `habits-view-${user.id}`,
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'habits',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          loadData();
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'habit_logs',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          loadData();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, loadData]);
 
   const activeHabits = useMemo(
     () =>
@@ -306,7 +263,7 @@ export default function HabitsView() {
     [habits],
   );
 
-  const archivedHabits = useMemo(
+  const pausedHabits = useMemo(
     () =>
       habits.filter(
         (habit) => !habit.active,
@@ -314,65 +271,42 @@ export default function HabitsView() {
     [habits],
   );
 
-  const visibleHabits = useMemo(() => {
-    const source = showArchived
-      ? archivedHabits
-      : activeHabits;
-
-    const query = search
-      .trim()
-      .toLowerCase();
-
-    if (!query) return source;
-
-    return source.filter((habit) =>
-      [
-        habit.name,
-        habit.category,
-        habit.frequency,
-      ]
-        .filter(Boolean)
-        .some((value) =>
-          String(value)
-            .toLowerCase()
-            .includes(query),
+  const completedToday = useMemo(
+    () =>
+      activeHabits.filter((habit) =>
+        getCompletedToday(
+          habit.id,
+          logs,
+          today,
         ),
-    );
-  }, [
-    search,
-    showArchived,
-    activeHabits,
-    archivedHabits,
-  ]);
-
-  const todayCompletedCount =
-    activeHabits.filter((habit) =>
-      logs.some(
-        (log) =>
-          log.habit_id === habit.id &&
-          log.date === today &&
-          log.completed,
-      ),
-    ).length;
+      ).length,
+    [activeHabits, logs, today],
+  );
 
   const completionPercentage =
     activeHabits.length > 0
       ? Math.round(
-          (todayCompletedCount /
+          (completedToday /
             activeHabits.length) *
             100,
         )
       : 0;
 
-  const totalCompletedLogs = logs.filter(
-    (log) => log.completed,
-  ).length;
+  const bestStreak = useMemo(
+    () =>
+      habits.reduce(
+        (max, habit) =>
+          Math.max(max, habit.streak),
+        0,
+      ),
+    [habits],
+  );
 
   const openCreateModal = () => {
     setEditingHabit(null);
-    setForm(DEFAULT_FORM);
-    setModalOpen(true);
+    setForm(EMPTY_FORM);
     setOpenMenu(null);
+    setShowModal(true);
   };
 
   const openEditModal = (
@@ -382,7 +316,7 @@ export default function HabitsView() {
 
     setForm({
       name: habit.name,
-      icon: habit.icon || '✓',
+      icon: habit.icon || '🎯',
       frequency:
         habit.frequency || 'daily',
       target: String(
@@ -394,39 +328,49 @@ export default function HabitsView() {
         habit.category || 'Personal',
     });
 
-    setModalOpen(true);
     setOpenMenu(null);
+    setShowModal(true);
   };
 
   const closeModal = () => {
     if (saving) return;
 
-    setModalOpen(false);
+    setShowModal(false);
     setEditingHabit(null);
-    setForm(DEFAULT_FORM);
+    setForm(EMPTY_FORM);
   };
 
   const saveHabit = async () => {
     if (!user) return;
 
-    const trimmedName =
-      form.name.trim();
+    const name = form.name.trim();
 
-    if (!trimmedName) return;
+    if (!name) {
+      return;
+    }
+
+    const parsedTarget = Number(
+      form.target,
+    );
+
+    const target =
+      Number.isFinite(parsedTarget) &&
+      parsedTarget > 0
+        ? Math.max(
+            1,
+            Math.round(parsedTarget),
+          )
+        : 1;
 
     setSaving(true);
 
     try {
       const payload = {
-        name: trimmedName,
-        icon: form.icon || '✓',
+        name,
+        icon: form.icon || '🎯',
         frequency:
           form.frequency || 'daily',
-        target:
-          Math.max(
-            1,
-            Number(form.target) || 1,
-          ),
+        target,
         reminder_time:
           form.reminderTime || null,
         category:
@@ -440,14 +384,8 @@ export default function HabitsView() {
           await supabase
             .from('habits')
             .update(payload)
-            .eq(
-              'id',
-              editingHabit.id,
-            )
-            .eq(
-              'user_id',
-              user.id,
-            );
+            .eq('id', editingHabit.id)
+            .eq('user_id', user.id);
 
         if (error) {
           throw error;
@@ -472,18 +410,104 @@ export default function HabitsView() {
       await loadData();
     } catch (error) {
       console.error(
-        'Saving habit failed:',
+        'Failed to save habit:',
         error,
+      );
+
+      alert(
+        'Could not save the habit. Please try again.',
       );
     } finally {
       setSaving(false);
     }
   };
 
+  const deleteHabit = async (
+    habit: Habit,
+  ) => {
+    if (!user) return;
+
+    const confirmed = window.confirm(
+      `Delete "${habit.name}"?`,
+    );
+
+    if (!confirmed) return;
+
+    setOpenMenu(null);
+
+    try {
+      const { error } =
+        await supabase
+          .from('habit_logs')
+          .delete()
+          .eq('habit_id', habit.id)
+          .eq('user_id', user.id);
+
+      if (error) {
+        throw error;
+      }
+
+      const {
+        error: habitError,
+      } = await supabase
+        .from('habits')
+        .delete()
+        .eq('id', habit.id)
+        .eq('user_id', user.id);
+
+      if (habitError) {
+        throw habitError;
+      }
+
+      await loadData();
+    } catch (error) {
+      console.error(
+        'Failed to delete habit:',
+        error,
+      );
+
+      alert(
+        'Could not delete the habit. Please try again.',
+      );
+    }
+  };
+
+  const toggleActive = async (
+    habit: Habit,
+  ) => {
+    if (!user) return;
+
+    setOpenMenu(null);
+
+    try {
+      const { error } =
+        await supabase
+          .from('habits')
+          .update({
+            active: !habit.active,
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq('id', habit.id)
+          .eq('user_id', user.id);
+
+      if (error) {
+        throw error;
+      }
+
+      await loadData();
+    } catch (error) {
+      console.error(
+        'Failed to update habit:',
+        error,
+      );
+    }
+  };
+
   const toggleToday = async (
     habit: Habit,
   ) => {
-    if (!user || !habit.active) return;
+    if (!user) return;
 
     const existingLog =
       logs.find(
@@ -492,6 +516,9 @@ export default function HabitsView() {
           log.date === today,
       );
 
+    const currentlyCompleted =
+      existingLog?.completed ?? false;
+
     try {
       if (existingLog) {
         const { error } =
@@ -499,7 +526,7 @@ export default function HabitsView() {
             .from('habit_logs')
             .update({
               completed:
-                !existingLog.completed,
+                !currentlyCompleted,
             })
             .eq(
               'id',
@@ -529,33 +556,35 @@ export default function HabitsView() {
         }
       }
 
-      const nextLogsResult =
-        await supabase
-          .from('habit_logs')
-          .select(
-            'id,habit_id,date,completed',
-          )
-          .eq(
-            'user_id',
-            user.id,
-          )
-          .eq(
-            'habit_id',
-            habit.id,
-          )
-          .gte(
-            'date',
-            getDateOffset(-365),
-          );
+      const nextCompleted =
+        !currentlyCompleted;
 
-      if (!nextLogsResult.error) {
-        const nextStreak =
-          calculateStreak(
-            habit.id,
-            (nextLogsResult.data ??
-              []) as HabitLog[],
-          );
+      const nextStreak =
+        calculateStreak(
+          habit.id,
+          [
+            ...logs.filter(
+              (log) =>
+                !(
+                  log.habit_id ===
+                    habit.id &&
+                  log.date === today
+                ),
+            ),
+            {
+              id:
+                existingLog?.id ||
+                `temporary-${habit.id}-${today}`,
+              habit_id: habit.id,
+              date: today,
+              completed:
+                nextCompleted,
+            },
+          ],
+          today,
+        );
 
+      const { error: streakError } =
         await supabase
           .from('habits')
           .update({
@@ -563,905 +592,797 @@ export default function HabitsView() {
             updated_at:
               new Date().toISOString(),
           })
-          .eq(
-            'id',
-            habit.id,
-          )
-          .eq(
-            'user_id',
-            user.id,
-          );
+          .eq('id', habit.id)
+          .eq('user_id', user.id);
+
+      if (streakError) {
+        throw streakError;
       }
 
       await loadData();
     } catch (error) {
       console.error(
-        'Updating habit failed:',
+        'Failed to update habit completion:',
         error,
+      );
+
+      alert(
+        'Could not update the habit. Please try again.',
       );
     }
   };
 
-  const archiveHabit = async (
-    habit: Habit,
+  const updateForm = <
+    K extends keyof HabitForm,
+  >(
+    key: K,
+    value: HabitForm[K],
   ) => {
-    if (!user) return;
-
-    try {
-      const { error } =
-        await supabase
-          .from('habits')
-          .update({
-            active: false,
-            updated_at:
-              new Date().toISOString(),
-          })
-          .eq(
-            'id',
-            habit.id,
-          )
-          .eq(
-            'user_id',
-            user.id,
-          );
-
-      if (error) {
-        throw error;
-      }
-
-      setOpenMenu(null);
-      await loadData();
-    } catch (error) {
-      console.error(
-        'Archiving habit failed:',
-        error,
-      );
-    }
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
   };
-
-  const restoreHabit = async (
-    habit: Habit,
-  ) => {
-    if (!user) return;
-
-    try {
-      const { error } =
-        await supabase
-          .from('habits')
-          .update({
-            active: true,
-            updated_at:
-              new Date().toISOString(),
-          })
-          .eq(
-            'id',
-            habit.id,
-          )
-          .eq(
-            'user_id',
-            user.id,
-          );
-
-      if (error) {
-        throw error;
-      }
-
-      setOpenMenu(null);
-      await loadData();
-    } catch (error) {
-      console.error(
-        'Restoring habit failed:',
-        error,
-      );
-    }
-  };
-
-  const deleteHabit = async (
-    habit: Habit,
-  ) => {
-    if (!user) return;
-
-    const confirmed =
-      window.confirm(
-        `Delete "${habit.name}" permanently?`,
-      );
-
-    if (!confirmed) return;
-
-    try {
-      await supabase
-        .from('habit_logs')
-        .delete()
-        .eq(
-          'habit_id',
-          habit.id,
-        )
-        .eq(
-          'user_id',
-          user.id,
-        );
-
-      const { error } =
-        await supabase
-          .from('habits')
-          .delete()
-          .eq(
-            'id',
-            habit.id,
-          )
-          .eq(
-            'user_id',
-            user.id,
-          );
-
-      if (error) {
-        throw error;
-      }
-
-      setOpenMenu(null);
-      await loadData();
-    } catch (error) {
-      console.error(
-        'Deleting habit failed:',
-        error,
-      );
-    }
-  };
-
-  const getHabitTodayState = (
-    habitId: string,
-  ) =>
-    logs.some(
-      (log) =>
-        log.habit_id === habitId &&
-        log.date === today &&
-        log.completed,
-    );
-
-  const getDayState = (
-    habitId: string,
-    date: string,
-  ) =>
-    logs.some(
-      (log) =>
-        log.habit_id === habitId &&
-        log.date === date &&
-        log.completed,
-    );
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700 dark:border-slate-700 dark:border-t-white" />
-          Loading habits...
+      <div className="min-h-[100dvh] w-full min-w-0 overflow-x-hidden flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm">
+            Loading habits...
+          </span>
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      className="space-y-6 pb-24 lg:pb-8"
-      onClick={() => setOpenMenu(null)}
-    >
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">
-            Consistency
-          </p>
+    <div className="min-h-[100dvh] w-full min-w-0 overflow-x-hidden bg-slate-50 pb-28 text-slate-900 dark:bg-slate-950 dark:text-white lg:pb-10">
+      <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
 
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-            Habits
-          </h1>
+        <div className="mb-6 flex min-w-0 items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+              Daily consistency
+            </p>
 
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Build small routines that compound over time.
-          </p>
-        </div>
+            <h1 className="truncate text-2xl font-bold tracking-tight sm:text-3xl">
+              Habits
+            </h1>
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            openCreateModal();
-          }}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-        >
-          <Plus className="h-4 w-4" />
-          Add habit
-        </button>
-      </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Build small habits. Stay consistent.
+            </p>
+          </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          icon={
-            <CheckCircle2 className="h-5 w-5" />
-          }
-          label="Today's progress"
-          value={`${todayCompletedCount}/${activeHabits.length}`}
-          detail={`${completionPercentage}% complete`}
-        />
-
-        <StatCard
-          icon={
-            <Flame className="h-5 w-5" />
-          }
-          label="Active habits"
-          value={String(activeHabits.length)}
-          detail="Currently tracking"
-        />
-
-        <StatCard
-          icon={
-            <CalendarDays className="h-5 w-5" />
-          }
-          label="Completed logs"
-          value={String(
-            totalCompletedLogs,
-          )}
-          detail="Last 30 days"
-        />
-
-        <StatCard
-          icon={
-            <Archive className="h-5 w-5" />
-          }
-          label="Archived"
-          value={String(
-            archivedHabits.length,
-          )}
-          detail="Hidden habits"
-        />
-      </div>
-
-      {/* Today's progress */}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-slate-900 dark:text-white">
-                Today's progress
-              </h2>
-
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                {todayCompletedCount} of{' '}
-                {activeHabits.length} habits
-                completed
-              </p>
-            </div>
-
-            <span className="text-lg font-bold text-slate-900 dark:text-white">
-              {completionPercentage}%
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="flex shrink-0 items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.98] dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">
+              Add Habit
             </span>
-          </div>
-
-          <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-            <div
-              className="h-full rounded-full bg-slate-900 transition-all duration-500 dark:bg-white"
-              style={{
-                width: `${completionPercentage}%`,
-              }}
-            />
-          </div>
+          </button>
         </div>
-      </section>
 
-      {/* Search */}
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryCard
+            icon="✓"
+            label="Today"
+            value={`${completedToday}/${activeHabits.length}`}
+            description="completed"
+          />
 
-          <input
-            value={search}
-            onChange={(event) =>
-              setSearch(event.target.value)
-            }
-            placeholder="Search habits..."
-            className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-slate-600 dark:focus:ring-slate-800"
+          <SummaryCard
+            icon="◉"
+            label="Progress"
+            value={`${completionPercentage}%`}
+            description="today"
+          />
+
+          <SummaryCard
+            icon="🔥"
+            label="Best Streak"
+            value={`${bestStreak}`}
+            description="days"
+          />
+
+          <SummaryCard
+            icon="●"
+            label="Active"
+            value={`${activeHabits.length}`}
+            description="habits"
           />
         </div>
 
-        <button
-          type="button"
-          onClick={() =>
-            setShowArchived(
-              (current) => !current,
-            )
-          }
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
-          <Archive className="h-4 w-4" />
-          {showArchived
-            ? 'Active habits'
-            : 'Archived'}
-        </button>
-      </div>
-
-      {/* Habit list */}
-      {visibleHabits.length === 0 ? (
-        <EmptyState
-          archived={showArchived}
-          search={search}
-          onAdd={openCreateModal}
-        />
-      ) : (
-        <div className="space-y-3">
-          {visibleHabits.map((habit) => {
-            const completedToday =
-              getHabitTodayState(
-                habit.id,
-              );
-
-            const streak =
-              calculateStreak(
-                habit.id,
-                logs,
-              );
-
-            return (
-              <article
-                key={habit.id}
-                className={`rounded-2xl border bg-white transition dark:bg-slate-900 ${
-                  completedToday
-                    ? 'border-slate-300 dark:border-slate-700'
-                    : 'border-slate-200 dark:border-slate-800'
-                }`}
-              >
-                <div className="p-4 sm:p-5">
-                  <div className="flex items-center gap-3">
-                    {/* Toggle */}
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleToday(habit);
-                      }}
-                      disabled={
-                        !habit.active
-                      }
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-lg transition ${
-                        completedToday
-                          ? 'border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900'
-                          : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-600'
-                      }`}
-                    >
-                      {completedToday ? (
-                        <Check className="h-5 w-5" />
-                      ) : (
-                        habit.icon || '✓'
-                      )}
-                    </button>
-
-                    {/* Main info */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3
-                          className={`truncate font-semibold ${
-                            completedToday
-                              ? 'text-slate-500 line-through dark:text-slate-400'
-                              : 'text-slate-900 dark:text-white'
-                          }`}
-                        >
-                          {habit.name}
-                        </h3>
-
-                        {habit.category && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                            {habit.category}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-                        <span>
-                          {habit.frequency ||
-                            'Daily'}
-                        </span>
-
-                        {habit.target && (
-                          <span>
-                            Target:{' '}
-                            {habit.target}
-                          </span>
-                        )}
-
-                        {habit.reminder_time && (
-                          <span>
-                            {habit.reminder_time}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Streak */}
-                    <div className="hidden shrink-0 items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800 sm:flex">
-                      <Flame className="h-4 w-4 text-slate-500 dark:text-slate-300" />
-
-                      <span className="text-sm font-bold text-slate-700 dark:text-slate-200">
-                        {streak}
-                      </span>
-
-                      <span className="text-xs text-slate-400">
-                        day
-                        {streak === 1
-                          ? ''
-                          : 's'}
-                      </span>
-                    </div>
-
-                    {/* Menu */}
-                    <div
-                      className="relative"
-                      onClick={(event) =>
-                        event.stopPropagation()
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenMenu(
-                            (current) =>
-                              current ===
-                              habit.id
-                                ? null
-                                : habit.id,
-                          )
-                        }
-                        className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                      >
-                        <MoreHorizontal className="h-5 w-5" />
-                      </button>
-
-                      {openMenu ===
-                        habit.id && (
-                        <div className="absolute right-0 top-11 z-30 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openEditModal(
-                                habit,
-                              )
-                            }
-                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                          >
-                            <Pencil className="h-4 w-4" />
-                            Edit
-                          </button>
-
-                          {habit.active ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                archiveHabit(
-                                  habit,
-                                )
-                              }
-                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                            >
-                              <Archive className="h-4 w-4" />
-                              Archive
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                restoreHabit(
-                                  habit,
-                                )
-                              }
-                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                            >
-                              <RotateCcw className="h-4 w-4" />
-                              Restore
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              deleteHabit(
-                                habit,
-                              )
-                            }
-                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Mobile streak */}
-                  <div className="mt-4 flex items-center justify-between sm:hidden">
-                    <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                      <Flame className="h-4 w-4 text-slate-500 dark:text-slate-300" />
-                      <span>
-                        {streak} day
-                        {streak === 1
-                          ? ''
-                          : 's'}{' '}
-                        streak
-                      </span>
-                    </div>
-
-                    <span
-                      className={`text-xs font-medium ${
-                        completedToday
-                          ? 'text-slate-700 dark:text-slate-200'
-                          : 'text-slate-400'
-                      }`}
-                    >
-                      {completedToday
-                        ? 'Completed today'
-                        : 'Tap to complete'}
-                    </span>
-                  </div>
-
-                  {/* Seven day history */}
-                  <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
-                    <div className="grid grid-cols-7 gap-1.5">
-                      {lastSevenDays.map(
-                        (day) => {
-                          const completed =
-                            getDayState(
-                              habit.id,
-                              day.date,
-                            );
-
-                          return (
-                            <div
-                              key={day.date}
-                              className="flex flex-col items-center gap-1"
-                            >
-                              <span className="text-[10px] font-medium text-slate-400">
-                                {day.label}
-                              </span>
-
-                              <div
-                                className={`flex h-7 w-7 items-center justify-center rounded-lg text-[10px] font-semibold ${
-                                  completed
-                                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                                    : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
-                                }`}
-                              >
-                                {completed ? (
-                                  <Check className="h-3.5 w-3.5" />
-                                ) : (
-                                  day.day
-                                )}
-                              </div>
-                            </div>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Modal */}
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
-          onClick={closeModal}
-        >
-          <div
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 p-5 dark:border-slate-800">
+        {activeHabits.length > 0 && (
+          <div className="mb-6 overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                  {editingHabit
-                    ? 'Edit habit'
-                    : 'Create habit'}
+                <h2 className="font-semibold">
+                  Today&apos;s progress
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Keep it simple and measurable.
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {completedToday ===
+                  activeHabits.length
+                    ? 'All active habits completed 🎉'
+                    : `${activeHabits.length - completedToday} habit${
+                        activeHabits.length -
+                          completedToday ===
+                        1
+                          ? ''
+                          : 's'
+                      } remaining`}
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={closeModal}
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <span className="text-lg font-bold">
+                {completionPercentage}%
+              </span>
             </div>
 
-            <div className="space-y-5 p-5">
-              <div>
-                <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  Habit name
-                </label>
-
-                <input
-                  autoFocus
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Read 20 pages"
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                  Icon
-                </label>
-
-                <div className="flex flex-wrap gap-2">
-                  {ICON_OPTIONS.map(
-                    (icon) => (
-                      <button
-                        key={icon}
-                        type="button"
-                        onClick={() =>
-                          setForm(
-                            (current) => ({
-                              ...current,
-                              icon,
-                            }),
-                          )
-                        }
-                        className={`flex h-10 w-10 items-center justify-center rounded-xl border text-lg transition ${
-                          form.icon === icon
-                            ? 'border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900'
-                            : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        {icon}
-                      </button>
-                    ),
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    Frequency
-                  </label>
-
-                  <select
-                    value={form.frequency}
-                    onChange={(event) =>
-                      setForm(
-                        (current) => ({
-                          ...current,
-                          frequency:
-                            event.target
-                              .value,
-                        }),
-                      )
-                    }
-                    className={selectClass}
-                  >
-                    <option value="daily">
-                      Daily
-                    </option>
-                    <option value="weekly">
-                      Weekly
-                    </option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    Target
-                  </label>
-
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.target}
-                    onChange={(event) =>
-                      setForm(
-                        (current) => ({
-                          ...current,
-                          target:
-                            event.target
-                              .value,
-                        }),
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    Category
-                  </label>
-
-                  <select
-                    value={form.category}
-                    onChange={(event) =>
-                      setForm(
-                        (current) => ({
-                          ...current,
-                          category:
-                            event.target
-                              .value,
-                        }),
-                      )
-                    }
-                    className={selectClass}
-                  >
-                    {CATEGORY_OPTIONS.map(
-                      (category) => (
-                        <option
-                          key={category}
-                          value={category}
-                        >
-                          {category}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    Reminder
-                  </label>
-
-                  <input
-                    type="time"
-                    value={
-                      form.reminderTime
-                    }
-                    onChange={(event) =>
-                      setForm(
-                        (current) => ({
-                          ...current,
-                          reminderTime:
-                            event.target
-                              .value,
-                        }),
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 p-5 sm:flex-row sm:justify-end dark:border-slate-800">
-              <button
-                type="button"
-                onClick={closeModal}
-                disabled={saving}
-                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={saveHabit}
-                disabled={
-                  saving ||
-                  !form.name.trim()
-                }
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-              >
-                {saving
-                  ? 'Saving...'
-                  : editingHabit
-                    ? 'Save changes'
-                    : 'Create habit'}
-              </button>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              <div
+                className="h-full rounded-full bg-slate-900 transition-all duration-500 dark:bg-white"
+                style={{
+                  width: `${completionPercentage}%`,
+                }}
+              />
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
 
-/* -------------------- SMALL COMPONENTS -------------------- */
+        <section className="mb-8">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold">
+                Active habits
+              </h2>
 
-function StatCard({
-  icon,
-  label,
-  value,
-  detail,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-      <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-        {icon}
-      </div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Complete your habits for today
+              </p>
+            </div>
 
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-        {label}
-      </p>
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </button>
+          </div>
 
-      <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
-        {value}
-      </p>
+          {activeHabits.length === 0 ? (
+            <EmptyHabits
+              onAdd={openCreateModal}
+            />
+          ) : (
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {activeHabits.map(
+                (habit) => (
+                  <HabitCard
+                    key={habit.id}
+                    habit={habit}
+                    completedToday={getCompletedToday(
+                      habit.id,
+                      logs,
+                      today,
+                    )}
+                    onToggle={() =>
+                      toggleToday(habit)
+                    }
+                    onEdit={() =>
+                      openEditModal(habit)
+                    }
+                    onDelete={() =>
+                      deleteHabit(habit)
+                    }
+                    onToggleActive={() =>
+                      toggleActive(habit)
+                    }
+                    menuOpen={
+                      openMenu ===
+                      habit.id
+                    }
+                    setMenuOpen={() =>
+                      setOpenMenu(
+                        openMenu ===
+                          habit.id
+                          ? null
+                          : habit.id,
+                      )
+                    }
+                  />
+                ),
+              )}
+            </div>
+          )}
+        </section>
 
-      <p className="mt-1 text-[11px] text-slate-400">
-        {detail}
-      </p>
-    </div>
-  );
-}
+        {pausedHabits.length > 0 && (
+          <section>
+            <div className="mb-4">
+              <h2 className="text-lg font-bold">
+                Paused habits
+              </h2>
 
-function EmptyState({
-  archived,
-  search,
-  onAdd,
-}: {
-  archived: boolean;
-  search: string;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-700 dark:bg-slate-900">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-        {archived ? (
-          <Archive className="h-5 w-5" />
-        ) : (
-          <CheckCircle2 className="h-5 w-5" />
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Habits you are currently taking a break from
+              </p>
+            </div>
+
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {pausedHabits.map(
+                (habit) => (
+                  <PausedHabit
+                    key={habit.id}
+                    habit={habit}
+                    onResume={() =>
+                      toggleActive(habit)
+                    }
+                    onEdit={() =>
+                      openEditModal(habit)
+                    }
+                    onDelete={() =>
+                      deleteHabit(habit)
+                    }
+                  />
+                ),
+              )}
+            </div>
+          </section>
         )}
       </div>
 
-      <h3 className="mt-4 font-semibold text-slate-900 dark:text-white">
-        {search
-          ? 'No habits found'
-          : archived
-            ? 'No archived habits'
-            : 'No habits yet'}
-      </h3>
+      {showModal && (
+        <HabitModal
+          editingHabit={editingHabit}
+          form={form}
+          saving={saving}
+          onChange={updateForm}
+          onClose={closeModal}
+          onSave={saveHabit}
+        />
+      )}
+    </div>
+  );
+}
 
-      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-        {search
-          ? 'Try a different search term.'
-          : archived
-            ? 'Archived habits will appear here.'
-            : 'Start with one small habit and build from there.'}
-      </p>
-
-      {!search && !archived && (
+function HabitCard({
+  habit,
+  completedToday,
+  onToggle,
+  onEdit,
+  onDelete,
+  onToggleActive,
+  menuOpen,
+  setMenuOpen,
+}: {
+  habit: Habit;
+  completedToday: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggleActive: () => void;
+  menuOpen: boolean;
+  setMenuOpen: () => void;
+}) {
+  return (
+    <div
+      className={`relative min-w-0 overflow-hidden rounded-3xl border bg-white p-4 shadow-sm transition dark:bg-slate-900 ${
+        completedToday
+          ? 'border-emerald-200 dark:border-emerald-900/60'
+          : 'border-slate-200 dark:border-slate-800'
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-3">
         <button
           type="button"
-          onClick={onAdd}
-          className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
+          onClick={onToggle}
+          aria-label={
+            completedToday
+              ? 'Mark habit incomplete'
+              : 'Mark habit complete'
+          }
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xl transition ${
+            completedToday
+              ? 'bg-emerald-500 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-slate-800'
+          }`}
         >
-          <Plus className="h-4 w-4" />
-          Create your first habit
+          {completedToday ? (
+            <Check className="h-6 w-6" />
+          ) : (
+            habit.icon
+          )}
         </button>
-      )}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3
+                className={`truncate font-semibold ${
+                  completedToday
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : ''
+                }`}
+              >
+                {habit.name}
+              </h3>
+
+              <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                {formatFrequency(
+                  habit.frequency,
+                  habit.target,
+                )}
+              </p>
+            </div>
+
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={setMenuOpen}
+                className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                aria-label="Habit options"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+
+              {menuOpen && (
+                <div className="absolute right-0 top-10 z-30 w-40 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                  <button
+                    type="button"
+                    onClick={onEdit}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <Edit3 className="h-4 w-4" />
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onToggleActive}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Pause
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-600 dark:bg-orange-950/30 dark:text-orange-400">
+              <Flame className="h-3.5 w-3.5" />
+              {habit.streak} day
+              {habit.streak === 1
+                ? ''
+                : 's'}
+            </span>
+
+            {habit.category && (
+              <span className="max-w-[140px] truncate rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                {habit.category}
+              </span>
+            )}
+
+            {habit.reminder_time && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
+                <Bell className="h-3 w-3" />
+                {habit.reminder_time}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`mt-4 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold transition active:scale-[0.99] ${
+          completedToday
+            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-400 dark:hover:bg-emerald-950/50'
+            : 'bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'
+        }`}
+      >
+        <Check className="h-4 w-4" />
+
+        {completedToday
+          ? 'Completed today'
+          : 'Mark as complete'}
+      </button>
+    </div>
+  );
+}
+
+function PausedHabit({
+  habit,
+  onResume,
+  onEdit,
+  onDelete,
+}: {
+  habit: Habit;
+  onResume: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 opacity-80 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-xl grayscale dark:bg-slate-800">
+          {habit.icon}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-semibold">
+            {habit.name}
+          </h3>
+
+          <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+            Paused ·{' '}
+            {formatFrequency(
+              habit.frequency,
+              habit.target,
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <button
+          type="button"
+          onClick={onResume}
+          className="col-span-1 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
+        >
+          Resume
+        </button>
+
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
+        >
+          Edit
+        </button>
+
+        <button
+          type="button"
+          onClick={onDelete}
+          className="rounded-xl bg-red-50 px-3 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-400"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HabitModal({
+  editingHabit,
+  form,
+  saving,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  editingHabit: Habit | null;
+  form: HabitForm;
+  saving: boolean;
+  onChange: <K extends keyof HabitForm>(
+    key: K,
+    value: HabitForm[K],
+  ) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        if (
+          event.target ===
+          event.currentTarget
+        ) {
+          onClose();
+        }
+      }}
+    >
+      <div className="max-h-[92dvh] w-full min-w-0 overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl dark:bg-slate-900 sm:max-w-lg sm:rounded-3xl sm:p-6">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">
+              {editingHabit
+                ? 'Edit habit'
+                : 'Create habit'}
+            </h2>
+
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Keep it simple and consistent.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Habit name
+            </label>
+
+            <input
+              value={form.name}
+              onChange={(event) =>
+                onChange(
+                  'name',
+                  event.target.value,
+                )
+              }
+              placeholder="e.g. Read 20 pages"
+              className={inputClass}
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Icon
+            </label>
+
+            <div className="grid grid-cols-8 gap-2">
+              {ICONS.map((icon) => (
+                <button
+                  key={icon}
+                  type="button"
+                  onClick={() =>
+                    onChange(
+                      'icon',
+                      icon,
+                    )
+                  }
+                  className={`flex h-10 items-center justify-center rounded-xl text-lg transition ${
+                    form.icon === icon
+                      ? 'bg-slate-900 ring-2 ring-slate-900 ring-offset-2 dark:bg-white dark:ring-white dark:ring-offset-slate-900'
+                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Frequency
+              </label>
+
+              <select
+                value={form.frequency}
+                onChange={(event) =>
+                  onChange(
+                    'frequency',
+                    event.target.value,
+                  )
+                }
+                className={inputClass}
+              >
+                <option value="daily">
+                  Daily
+                </option>
+
+                <option value="weekly">
+                  Weekly
+                </option>
+
+                <option value="custom">
+                  Custom
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Target
+              </label>
+
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={form.target}
+                onChange={(event) =>
+                  onChange(
+                    'target',
+                    event.target.value,
+                  )
+                }
+                className={inputClass}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Category
+            </label>
+
+            <select
+              value={form.category}
+              onChange={(event) =>
+                onChange(
+                  'category',
+                  event.target.value,
+                )
+              }
+              className={inputClass}
+            >
+              {CATEGORIES.map(
+                (category) => (
+                  <option
+                    key={category}
+                    value={category}
+                  >
+                    {category}
+                  </option>
+                ),
+              )}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Reminder time
+            </label>
+
+            <div className="relative">
+              <Bell className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+              <input
+                type="time"
+                value={
+                  form.reminderTime
+                }
+                onChange={(event) =>
+                  onChange(
+                    'reminderTime',
+                    event.target.value,
+                  )
+                }
+                className={`${inputClass} pl-10`}
+              />
+            </div>
+
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              Optional reminder time.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={
+                saving ||
+                !form.name.trim()
+              }
+              className="flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+
+              {saving
+                ? 'Saving...'
+                : editingHabit
+                  ? 'Save changes'
+                  : 'Create habit'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  description,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-sm dark:bg-slate-800">
+        {icon}
+      </div>
+
+      <p className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
+        {label}
+      </p>
+
+      <div className="mt-1 flex min-w-0 items-baseline gap-1">
+        <span className="truncate text-xl font-bold">
+          {value}
+        </span>
+
+        <span className="truncate text-[10px] text-slate-400">
+          {description}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function EmptyHabits({
+  onAdd,
+}: {
+  onAdd: () => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center dark:border-slate-700 dark:bg-slate-900">
+      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl dark:bg-slate-800">
+        🎯
+      </div>
+
+      <h3 className="font-semibold">
+        No habits yet
+      </h3>
+
+      <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+        Add your first habit and start building a consistent routine.
+      </p>
+
+      <button
+        type="button"
+        onClick={onAdd}
+        className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
+      >
+        <Plus className="h-4 w-4" />
+        Create your first habit
+      </button>
     </div>
   );
 }
 
 const inputClass =
-  'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:border-slate-500 dark:focus:ring-slate-800';
-
-const selectClass =
-  'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:border-slate-500 dark:focus:ring-slate-800';
+  'w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-800';

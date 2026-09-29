@@ -460,21 +460,52 @@ export interface LifeOSContextType {
     ...args: string[]
   ) => Promise<void>;
 
-  addRun: (
+   addRun: (
     run: RunInput
+  ) => Promise<void>;
+
+  updateRun: (
+    id: string,
+    run: RunInput
+  ) => Promise<void>;
+
+  deleteRun: (
+    id: string
   ) => Promise<void>;
 
   addWorkout: (
     workout: WorkoutInput
   ) => Promise<void>;
 
+  updateWorkout: (
+    id: string,
+    workout: WorkoutInput
+  ) => Promise<void>;
+
+  deleteWorkout: (
+    id: string
+  ) => Promise<void>;
+
   addMeal: (
     meal: MealInput
+  ) => Promise<void>;
+
+  updateMeal: (
+    id: string,
+    meal: MealInput
+  ) => Promise<void>;
+
+  deleteMeal: (
+    id: string
   ) => Promise<void>;
 
   addWater: (
     amountMl: number,
     date?: string
+  ) => Promise<void>;
+
+  deleteWater: (
+    id: string
   ) => Promise<void>;
 
   toggleHabitToday: (
@@ -2355,16 +2386,50 @@ const deleteTask = async (id: string) => {
 const updateTask = async (id: string, input: TaskInput) => {
   if (!user) return;
 
+  const existingTask = tasks.find((task) => task.id === id);
+
+  if (!existingTask) return;
+
+  const completed =
+    input.completed !== undefined
+      ? input.completed
+      : existingTask.completed;
+
+  const priority =
+    input.priority !== undefined
+      ? input.priority
+      : existingTask.priority ?? 'medium';
+
+  const dueDate =
+    input.dueDate !== undefined
+      ? input.dueDate
+      : existingTask.dueDate;
+
+  const category =
+    input.category !== undefined
+      ? input.category
+      : existingTask.category ?? 'personal';
+
+  const estimatedMinutes =
+    input.estimatedMinutes !== undefined
+      ? input.estimatedMinutes
+      : existingTask.estimatedMinutes;
+
+  const description =
+    input.description !== undefined
+      ? input.description
+      : existingTask.description;
+
   const { error } = await supabase
     .from('tasks')
     .update({
       title: input.title,
-      description: input.description ?? null,
-      completed: input.completed ?? false,
-      priority: input.priority ?? 'medium',
-      due_date: input.dueDate ?? null,
-      category: input.category ?? 'personal',
-      estimated_minutes: input.estimatedMinutes ?? null,
+      description: description ?? null,
+      completed,
+      priority,
+      due_date: dueDate || null,
+      category,
+      estimated_minutes: estimatedMinutes ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
@@ -2375,19 +2440,18 @@ const updateTask = async (id: string, input: TaskInput) => {
     throw error;
   }
 
-  setTasks((prev) =>
-    prev.map((task) =>
+  setTasks((previous) =>
+    previous.map((task) =>
       task.id === id
         ? {
             ...task,
             title: input.title,
-            description: input.description,
-            completed: input.completed ?? task.completed,
-            priority: input.priority ?? task.priority,
-            dueDate: input.dueDate ?? task.dueDate,
-            category: input.category ?? task.category,
-            estimatedMinutes:
-              input.estimatedMinutes ?? task.estimatedMinutes,
+            description,
+            completed,
+            priority,
+            dueDate,
+            category,
+            estimatedMinutes,
           }
         : task
     )
@@ -3073,6 +3137,103 @@ const updateTask = async (id: string, input: TaskInput) => {
       );
     };
 
+const updateRun = async (
+  id: string,
+  run: RunInput
+) => {
+  if (!user) return;
+
+  const existingRun = runs.find(
+    (item) => item.id === id
+  );
+
+  if (!existingRun) return;
+
+  const date = run.date ?? existingRun.date;
+
+  const durationSeconds =
+    run.durationSeconds !== undefined
+      ? run.durationSeconds
+      : run.durationMinutes !== undefined
+        ? Math.round(run.durationMinutes * 60)
+        : existingRun.durationSeconds;
+
+  let pace = run.pace;
+
+  if (pace === undefined && run.avgPace !== undefined) {
+    pace =
+      typeof run.avgPace === 'number'
+        ? run.avgPace
+        : Number.parseFloat(run.avgPace);
+  }
+
+  if (pace === undefined || !Number.isFinite(pace)) {
+    pace =
+      run.distanceKm > 0 && durationSeconds > 0
+        ? durationSeconds / 60 / run.distanceKm
+        : 0;
+  }
+
+  const { data, error } = await supabase
+    .from('runs')
+    .update({
+      date,
+      distance_km: run.distanceKm,
+      duration_seconds: durationSeconds,
+      pace,
+      calories: run.calories ?? null,
+      notes: run.notes ?? null,
+      route_location: run.routeLocation ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  const numericPace = Number(data.pace ?? 0);
+
+  const updatedRun: Run = {
+    id: data.id,
+    date: data.date ?? date,
+    distanceKm: Number(data.distance_km ?? 0),
+    durationSeconds: Number(data.duration_seconds ?? 0),
+    durationMinutes: Number(data.duration_seconds ?? 0) / 60,
+    pace: numericPace,
+    avgPace: numericPace,
+    calories:
+      data.calories != null
+        ? Number(data.calories)
+        : undefined,
+    notes: data.notes ?? undefined,
+    routeLocation: data.route_location ?? undefined,
+  };
+
+  setRuns((previous) =>
+    previous.map((item) =>
+      item.id === id ? updatedRun : item
+    )
+  );
+};
+
+const deleteRun = async (id: string) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('runs')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+
+  setRuns((previous) =>
+    previous.filter((run) => run.id !== id)
+  );
+};
+
   /* =======================================================
      WORKOUTS
   ======================================================= */
@@ -3178,6 +3339,95 @@ const updateTask = async (id: string, input: TaskInput) => {
       );
     };
 
+const updateWorkout = async (
+  id: string,
+  workout: WorkoutInput
+) => {
+  if (!user) return;
+
+  const existingWorkout = workouts.find(
+    (item) => item.id === id
+  );
+
+  if (!existingWorkout) return;
+
+  const name =
+    workout.name ??
+    workout.routineName ??
+    existingWorkout.name;
+
+  const date =
+    workout.date ??
+    existingWorkout.date;
+
+  const durationSeconds =
+    workout.durationSeconds !== undefined
+      ? workout.durationSeconds
+      : workout.durationMinutes !== undefined
+        ? Math.round(workout.durationMinutes * 60)
+        : existingWorkout.durationSeconds;
+
+  const notes =
+    workout.notes !== undefined
+      ? workout.notes
+      : existingWorkout.notes;
+
+  const { data, error } = await supabase
+    .from('workouts')
+    .update({
+      name,
+      date,
+      duration_seconds: durationSeconds,
+      notes: notes ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  const updatedWorkout: Workout = {
+    id: data.id,
+    name: data.name ?? 'Workout',
+    routineName: data.name ?? 'Workout',
+    date: data.date ?? date,
+    durationSeconds: Number(
+      data.duration_seconds ?? 0
+    ),
+    durationMinutes:
+      Number(data.duration_seconds ?? 0) / 60,
+    notes: data.notes ?? undefined,
+    totalVolumeKg:
+      existingWorkout.totalVolumeKg,
+  };
+
+  setWorkouts((previous) =>
+    previous.map((item) =>
+      item.id === id ? updatedWorkout : item
+    )
+  );
+};
+
+const deleteWorkout = async (id: string) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('workouts')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+
+  setWorkouts((previous) =>
+    previous.filter(
+      (workout) => workout.id !== id
+    )
+  );
+};
+
   /* =======================================================
      MEALS
   ======================================================= */
@@ -3229,6 +3479,114 @@ const updateTask = async (id: string, input: TaskInput) => {
     newMeal,
     ...previous,
   ]);
+};
+
+const updateMeal = async (
+  id: string,
+  meal: MealInput
+) => {
+  if (!user) return;
+
+  const existingMeal = meals.find(
+    (item) => item.id === id
+  );
+
+  if (!existingMeal) return;
+
+  const name =
+    meal.name ??
+    meal.foodName ??
+    existingMeal.name;
+
+  const mealType =
+    meal.mealType ??
+    existingMeal.mealType;
+
+  const calories =
+    meal.calories !== undefined
+      ? Number(meal.calories)
+      : existingMeal.calories;
+
+  const protein =
+    meal.protein !== undefined
+      ? Number(meal.protein)
+      : meal.proteinGrams !== undefined
+        ? Number(meal.proteinGrams)
+        : existingMeal.protein;
+
+  const carbs =
+    meal.carbs !== undefined
+      ? Number(meal.carbs)
+      : meal.carbsGrams !== undefined
+        ? Number(meal.carbsGrams)
+        : existingMeal.carbs;
+
+  const fat =
+    meal.fat !== undefined
+      ? Number(meal.fat)
+      : meal.fatGrams !== undefined
+        ? Number(meal.fatGrams)
+        : existingMeal.fat;
+
+  const date =
+    meal.date ??
+    existingMeal.date;
+
+  const { data, error } = await supabase
+    .from('meals')
+    .update({
+      meal_type: mealType,
+      name,
+      calories,
+      protein,
+      carbs,
+      fat,
+      date,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  const updatedMeal: Meal = {
+    id: data.id,
+    mealType: data.meal_type ?? 'meal',
+    name: data.name ?? '',
+    foodName: data.name ?? '',
+    calories: Number(data.calories ?? 0),
+    protein: Number(data.protein ?? 0),
+    proteinGrams: Number(data.protein ?? 0),
+    carbs: Number(data.carbs ?? 0),
+    fat: Number(data.fat ?? 0),
+    date: data.date ?? date,
+  };
+
+  setMeals((previous) =>
+    previous.map((item) =>
+      item.id === id ? updatedMeal : item
+    )
+  );
+};
+
+const deleteMeal = async (id: string) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('meals')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+
+  setMeals((previous) =>
+    previous.filter(
+      (meal) => meal.id !== id
+    )
+  );
 };
 
   /* =======================================================
@@ -3294,6 +3652,22 @@ const updateTask = async (id: string, input: TaskInput) => {
         ]
       );
     };
+
+const deleteWater = async (id: string) => {
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('water_logs')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+
+  setWaterLogs((previous) =>
+    previous.filter((log) => log.id !== id)
+  );
+};
 
   /* =======================================================
      HABITS
@@ -4315,13 +4689,20 @@ const updateTask = async (id: string, input: TaskInput) => {
 
         toggleTopicStatus,
 
-        addRun,
+       addRun,
+updateRun,
+deleteRun,
 
-        addWorkout,
+addWorkout,
+updateWorkout,
+deleteWorkout,
 
-        addMeal,
+addMeal,
+updateMeal,
+deleteMeal,
 
-        addWater,
+addWater,
+deleteWater,
 
         toggleHabitToday,
 

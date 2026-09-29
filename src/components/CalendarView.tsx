@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
+import { getLocalDate } from '../lib/date';
 import { useAuth } from '../context/AuthContext';
 
 type Priority = 'low' | 'medium' | 'high';
@@ -52,14 +53,6 @@ const emptyForm: TaskForm = {
   estimated_minutes: '',
 };
 
-function getLocalDateString(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
 function parseDate(dateString: string) {
   const [year, month, day] = dateString.split('-').map(Number);
 
@@ -85,7 +78,7 @@ function CalendarView() {
   );
 
   const [selectedDate, setSelectedDate] = useState(
-    getLocalDateString(today)
+    getLocalDate(today)
   );
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -157,7 +150,7 @@ function CalendarView() {
 
       days.push({
         date,
-        dateString: getLocalDateString(date),
+        dateString: getLocalDate(date),
       });
     }
 
@@ -222,7 +215,7 @@ function CalendarView() {
       new Date(now.getFullYear(), now.getMonth(), 1)
     );
 
-    setSelectedDate(getLocalDateString(now));
+    setSelectedDate(getLocalDate(now));
   };
 
   const openAddModal = () => {
@@ -483,8 +476,11 @@ function CalendarView() {
             const dateString = day.dateString;
             const dayTasks = tasksByDate[dateString] ?? [];
 
-            const isToday = dateString === getLocalDateString(today);
-            const isSelected = dateString === selectedDate;
+            const isToday =
+              dateString === getLocalDate(today);
+
+            const isSelected =
+              dateString === selectedDate;
 
             return (
               <button
@@ -628,7 +624,9 @@ function CalendarView() {
                   <div className="min-w-0 flex-1">
                     <h3
                       className={`font-semibold text-gray-900 dark:text-white ${
-                        task.completed ? 'line-through opacity-60' : ''
+                        task.completed
+                          ? 'line-through opacity-60'
+                          : ''
                       }`}
                     >
                       {task.title}

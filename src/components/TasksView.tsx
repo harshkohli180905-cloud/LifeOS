@@ -13,6 +13,7 @@ import {
 
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { getLocalDate } from '../lib/date';
 
 type Priority = 'low' | 'medium' | 'high';
 
@@ -70,12 +71,7 @@ function formatDate(date: string | null) {
 function isOverdue(task: Task) {
   if (!task.due_date || task.completed) return false;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const due = new Date(`${task.due_date}T00:00:00`);
-
-  return due < today;
+  return task.due_date < getLocalDate();
 }
 
 function TasksView() {
@@ -323,16 +319,11 @@ function TasksView() {
     isOverdue(task)
   ).length;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getLocalDate();
 
-  const todayTasks = tasks.filter((task) => {
-    if (!task.due_date) return false;
-
-    const due = new Date(`${task.due_date}T00:00:00`);
-
-    return due.getTime() === today.getTime();
-  }).length;
+const todayTasks = tasks.filter(
+  (task) => task.due_date === today
+).length;
 
   const priorityClasses: Record<Priority, string> = {
     low: 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400',

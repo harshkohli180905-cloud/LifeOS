@@ -1,13 +1,20 @@
-import { useState, type ReactNode } from 'react';
 import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import {
+  ArrowLeft,
   ArrowRight,
-  BookOpen,
   Check,
-  Dumbbell,
   Droplets,
-  Flag,
+  Flame,
+  Footprints,
+  Loader2,
   Target,
+  Trophy,
   User,
+  Utensils,
 } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
@@ -19,22 +26,89 @@ type OnboardingViewProps = {
   onComplete: () => void;
 };
 
-type TargetInputProps = {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  suffix: string;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (value: number) => void;
+type Step = 1 | 2 | 3;
+
+type TargetValues = {
+  study: string;
+  water: string;
+  run: string;
+  protein: string;
+  calories: string;
 };
 
-type SummaryCardProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
+const DEFAULT_TARGETS: TargetValues = {
+  study: '2',
+  water: '3',
+  run: '5',
+  protein: '140',
+  calories: '2500',
 };
+
+function getStoredTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') {
+    return 'light';
+  }
+
+  const stored = localStorage.getItem('lifeos-theme');
+
+  if (stored === 'dark') {
+    return 'dark';
+  }
+
+  if (stored === 'light') {
+    return 'light';
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light';
+}
+
+function sanitizeNumber(value: string) {
+  if (value === '') {
+    return '';
+  }
+
+  return value.replace(/[^\d.]/g, '');
+}
+
+function positiveNumber(value: string) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+
+  return parsed;
+}
+
+function formatNumber(value: number, decimals = 1) {
+  if (!Number.isFinite(value)) {
+    return '0';
+  }
+
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  return value.toFixed(decimals).replace(/\.0+$/, '');
+}
+
+function getInitials(name: string) {
+  const clean = name.trim();
+
+  if (!clean) {
+    return 'HK';
+  }
+
+  const parts = clean.split(/\s+/);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
 
 export default function OnboardingView({
   initialName = '',
@@ -43,401 +117,885 @@ export default function OnboardingView({
 }: OnboardingViewProps) {
   const { user } = useAuth();
 
-  const [step, setStep] = useState(1);
-
-  const [name, setName] = useState(
-    initialName ||
-      user?.user_metadata?.full_name ||
-      ''
+  const [theme] = useState<'light' | 'dark'>(
+    getStoredTheme(),
   );
 
-  const [studyTarget, setStudyTarget] = useState(120);
-  const [waterTarget, setWaterTarget] = useState(3000);
-  const [runTarget, setRunTarget] = useState(5);
-  const [proteinTarget, setProteinTarget] = useState(140);
-  const [calorieTarget, setCalorieTarget] = useState(2500);
+  const [step, setStep] = useState<Step>(1);
+
+  const [name, setName] = useState(initialName);
+  const [avatar, setAvatar] = useState(initialAvatar ?? '');
+
+  const [targets, setTargets] =
+    useState<TargetValues>(DEFAULT_TARGETS);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  async function finishOnboarding() {
-    if (!user) return;
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      'dark',
+      theme === 'dark',
+    );
+
+    localStorage.setItem('lifeos-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (!initialName && user) {
+      const metadataName =
+        typeof user.user_metadata?.full_name === 'string'
+          ? user.user_metadata.full_name
+          : typeof user.user_metadata?.name === 'string'
+            ? user.user_metadata.name
+            : '';
+
+      if (metadataName) {
+        setName(metadataName);
+      }
+    }
+
+    if (!initialAvatar && user) {
+      const metadataAvatar =
+        typeof user.user_metadata?.avatar_url === 'string'
+          ? user.user_metadata.avatar_url
+          : typeof user.user_metadata?.picture === 'string'
+            ? user.user_metadata.picture
+            : '';
+
+      if (metadataAvatar) {
+        setAvatar(metadataAvatar);
+      }
+    }
+  }, [initialAvatar, initialName, user]);
+
+  const updateTarget = (
+    key: keyof TargetValues,
+    value: string,
+  ) => {
+    setTargets((previous) => ({
+      ...previous,
+      [key]: sanitizeNumber(value),
+    }));
+  };
+
+  const studyHours = positiveNumber(targets.study);
+  const waterLitres = positiveNumber(targets.water);
+  const runKm = positiveNumber(targets.run);
+  const proteinGrams = positiveNumber(targets.protein);
+  const calories = positiveNumber(targets.calories);
+
+  const progress = useMemo(() => {
+    if (step === 1) return 33;
+    if (step === 2) return 66;
+    return 100;
+  }, [step]);
+
+  const canContinueFromStepOne =
+    name.trim().length >= 2;
+
+  const handleNext = () => {
+    setError('');
+
+    if (step === 1) {
+      if (!canContinueFromStepOne) {
+        setError('Please enter your name to continue.');
+        return;
+      }
+
+      setStep(2);
+      return;
+    }
+
+    if (step === 2) {
+      setStep(3);
+    }
+  };
+
+  const handleBack = () => {
+    setError('');
+
+    if (step === 1) {
+      return;
+    }
+
+    setStep((previous) => (previous - 1) as Step);
+  };
+
+  const handleComplete = async () => {
+    if (!user) {
+      setError('Your account session is missing. Please sign in again.');
+      return;
+    }
+
+    if (!name.trim()) {
+      setError('Please enter your name.');
+      setStep(1);
+      return;
+    }
 
     setSaving(true);
     setError('');
 
-    const finalName =
-      name.trim() ||
-      user.user_metadata?.full_name ||
-      user.email?.split('@')[0] ||
-      'User';
-
-    const avatar =
-      initialAvatar ||
-      user.user_metadata?.avatar_url ||
-      user.user_metadata?.picture ||
-      null;
-
-    const { error: saveError } = await supabase
-      .from('profiles')
-      .upsert(
-        {
-          id: user.id,
-          name: finalName,
-          avatar_url: avatar,
-          daily_study_target: studyTarget,
-          daily_water_target: waterTarget,
-          daily_run_target: runTarget,
-          daily_protein_target: proteinTarget,
-          daily_calorie_target: calorieTarget,
-          onboarding_completed: true,
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: 'id',
-        }
+    try {
+      const studyTargetMinutes = Math.round(
+        studyHours * 60,
       );
 
-    if (saveError) {
-      console.error('Onboarding save error:', saveError);
-      setError('Could not save your setup. Please try again.');
+      const waterTargetMl = Math.round(
+        waterLitres * 1000,
+      );
+
+      const profilePayload = {
+        id: user.id,
+        name: name.trim(),
+        avatar_url: avatar.trim() || null,
+        daily_study_target: studyTargetMinutes,
+        daily_water_target: waterTargetMl,
+        daily_run_target: runKm,
+        daily_protein_target: proteinGrams,
+        daily_calorie_target: calories,
+        onboarding_completed: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert(profilePayload, {
+          onConflict: 'id',
+        });
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      localStorage.setItem(
+        'lifeos-onboarding-completed',
+        'true',
+      );
+
+      onComplete();
+    } catch (err) {
+      console.error('Onboarding save error:', err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Could not save your profile. Please try again.',
+      );
+    } finally {
       setSaving(false);
-      return;
     }
-
-    setSaving(false);
-    onComplete();
-  }
-
-  function nextStep() {
-    setError('');
-
-    if (step < 3) {
-      setStep((current) => current + 1);
-    } else {
-      finishOnboarding();
-    }
-  }
-
-  function backStep() {
-    setError('');
-
-    if (step > 1) {
-      setStep((current) => current - 1);
-    }
-  }
+  };
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-y-auto bg-gray-50 dark:bg-[#0b0b0b]">
-      <div className="flex min-h-screen items-center justify-center p-4 md:p-8">
-        <div className="w-full max-w-2xl">
-          <div className="mb-8 text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-xl font-bold text-white shadow-lg shadow-blue-600/20">
-              L
+    <div
+      className="
+        min-h-[100dvh]
+        w-full
+        min-w-0
+        overflow-x-hidden
+        bg-slate-50
+        text-slate-900
+        dark:bg-slate-950
+        dark:text-white
+      "
+    >
+      <div
+        className="
+          flex
+          min-h-[100dvh]
+          w-full
+          min-w-0
+          flex-col
+          overflow-x-hidden
+        "
+      >
+        {/* TOP BAR */}
+        <header className="shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+          <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-4 sm:px-6">
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+                <Target size={18} />
+              </div>
+
+              <span className="text-base font-bold tracking-tight">
+                LifeOS
+              </span>
             </div>
 
-            <h1 className="mt-4 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
-              Welcome to LifeOS
-            </h1>
-
-            <p className="mt-2 text-sm text-gray-500">
-              Let&apos;s set up your personal productivity system.
-            </p>
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Step {step} of 3
+            </span>
           </div>
 
-          <div className="mb-6 flex items-center justify-center gap-2">
-            {[1, 2, 3].map((item) => (
-              <div
-                key={item}
-                className={`h-1.5 rounded-full transition-all ${
-                  item === step
-                    ? 'w-12 bg-blue-600'
-                    : item < step
-                      ? 'w-8 bg-blue-400'
-                      : 'w-8 bg-gray-200 dark:bg-white/10'
-                }`}
-              />
-            ))}
+          <div className="h-1 w-full bg-slate-100 dark:bg-slate-900">
+            <div
+              className="h-full bg-blue-600 transition-all duration-500"
+              style={{
+                width: `${progress}%`,
+              }}
+            />
           </div>
+        </header>
 
-          <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-white/[0.03] md:p-8">
+        {/* CONTENT */}
+        <main
+          className="
+            flex
+            min-h-0
+            flex-1
+            w-full
+            min-w-0
+            items-start
+            justify-center
+            overflow-x-hidden
+            overflow-y-auto
+            overscroll-contain
+            px-4
+            py-8
+            sm:px-6
+            sm:py-12
+          "
+        >
+          <div className="w-full max-w-2xl pb-8">
+            {/* STEP 1 */}
             {step === 1 && (
-              <div>
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/10">
-                  <User size={25} />
-                </div>
+              <section className="animate-in fade-in duration-300">
+                <div className="mb-8 text-center">
+                  <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
+                    <User size={28} />
+                  </div>
 
-                <div className="mt-5 text-center">
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                    Let&apos;s start with you
-                  </h2>
+                  <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+                    Welcome to LifeOS
+                  </h1>
 
-                  <p className="mt-2 text-sm text-gray-500">
-                    Tell LifeOS what you&apos;d like to be called.
+                  <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400 sm:text-base">
+                    Let's personalize your workspace so everything
+                    feels built around you.
                   </p>
                 </div>
 
-                <div className="mt-8">
-                  <label className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    Your name
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-7">
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-semibold">
+                      What should we call you?
+                    </span>
+
+                    <input
+                      value={name}
+                      onChange={(event) =>
+                        setName(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' &&
+                          canContinueFromStepOne
+                        ) {
+                          handleNext();
+                        }
+                      }}
+                      placeholder="Enter your name"
+                      autoFocus
+                      autoComplete="name"
+                      className="
+                        w-full
+                        rounded-2xl
+                        border
+                        border-slate-200
+                        bg-slate-50
+                        px-4
+                        py-3.5
+                        text-sm
+                        outline-none
+                        transition
+                        placeholder:text-slate-400
+                        focus:border-blue-500
+                        focus:bg-white
+                        dark:border-slate-700
+                        dark:bg-slate-800
+                        dark:focus:bg-slate-800
+                      "
+                    />
                   </label>
 
-                  <input
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Enter your name"
-                    autoFocus
-                    className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
-                  />
+                  {avatar && (
+                    <div className="mt-6 flex items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-100 font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                        <img
+                          src={avatar}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.style.display =
+                              'none';
+                          }}
+                        />
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold">
+                          Google profile detected
+                        </p>
+
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Your profile photo will be used automatically.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!avatar && name.trim() && (
+                    <div className="mt-6 flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                        {getInitials(name)}
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold">
+                          Nice to meet you, {name.trim()}.
+                        </p>
+
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          This is how your profile will look.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {error && (
+                    <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    disabled={!canContinueFromStepOne}
+                    className="
+                      mt-7
+                      flex
+                      w-full
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-2xl
+                      bg-blue-600
+                      px-4
+                      py-3.5
+                      text-sm
+                      font-semibold
+                      text-white
+                      shadow-sm
+                      transition
+                      hover:bg-blue-700
+                      disabled:cursor-not-allowed
+                      disabled:opacity-50
+                    "
+                  >
+                    Continue
+                    <ArrowRight size={17} />
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {/* STEP 2 */}
+            {step === 2 && (
+              <section className="animate-in fade-in duration-300">
+                <div className="mb-7 text-center">
+                  <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20">
+                    <Target size={28} />
+                  </div>
+
+                  <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                    Set your daily targets
+                  </h1>
+
+                  <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    These targets will power your daily dashboard
+                    and progress tracking.
+                  </p>
                 </div>
 
-                {user?.email && (
-                  <div className="mt-4 rounded-xl bg-gray-50 p-3 dark:bg-white/[0.04]">
-                    <p className="text-xs text-gray-400">
-                      Signed in as
-                    </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {/* STUDY */}
+                  <TargetCard
+                    icon={<BookIcon />}
+                    title="Study"
+                    description="Focused study time"
+                    value={targets.study}
+                    unit="hours"
+                    placeholder="2"
+                    onChange={(value) =>
+                      updateTarget('study', value)
+                    }
+                  />
 
-                    <p className="mt-1 truncate text-sm font-medium text-gray-700 dark:text-gray-300">
-                      {user.email}
-                    </p>
+                  {/* WATER */}
+                  <TargetCard
+                    icon={<Droplets size={20} />}
+                    title="Water"
+                    description="Daily hydration"
+                    value={targets.water}
+                    unit="litres"
+                    placeholder="3"
+                    onChange={(value) =>
+                      updateTarget('water', value)
+                    }
+                  />
+
+                  {/* RUNNING */}
+                  <TargetCard
+                    icon={<Footprints size={20} />}
+                    title="Running"
+                    description="Daily distance"
+                    value={targets.run}
+                    unit="km"
+                    placeholder="5"
+                    onChange={(value) =>
+                      updateTarget('run', value)
+                    }
+                  />
+
+                  {/* PROTEIN */}
+                  <TargetCard
+                    icon={<Utensils size={20} />}
+                    title="Protein"
+                    description="Daily protein"
+                    value={targets.protein}
+                    unit="g"
+                    placeholder="140"
+                    onChange={(value) =>
+                      updateTarget('protein', value)
+                    }
+                  />
+
+                  {/* CALORIES */}
+                  <TargetCard
+                    icon={<Flame size={20} />}
+                    title="Calories"
+                    description="Daily calorie target"
+                    value={targets.calories}
+                    unit="kcal"
+                    placeholder="2500"
+                    onChange={(value) =>
+                      updateTarget('calories', value)
+                    }
+                  />
+
+                  {/* WORKOUT INFO */}
+                  <div
+                    className="
+                      rounded-2xl
+                      border
+                      border-slate-200
+                      bg-white
+                      p-4
+                      dark:border-slate-800
+                      dark:bg-slate-900
+                      sm:col-span-2
+                    "
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                        <Trophy size={20} />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">
+                          Workout
+                        </p>
+
+                        <p className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          Workout duration will be tracked in hours
+                          throughout LifeOS.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                    {error}
                   </div>
                 )}
-              </div>
+
+                <div className="mt-6 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    className="
+                      flex
+                      flex-1
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-2xl
+                      border
+                      border-slate-200
+                      bg-white
+                      px-4
+                      py-3.5
+                      text-sm
+                      font-semibold
+                      transition
+                      hover:bg-slate-50
+                      dark:border-slate-800
+                      dark:bg-slate-900
+                      dark:hover:bg-slate-800
+                    "
+                  >
+                    <ArrowLeft size={17} />
+                    Back
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    className="
+                      flex
+                      flex-[1.6]
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-2xl
+                      bg-blue-600
+                      px-4
+                      py-3.5
+                      text-sm
+                      font-semibold
+                      text-white
+                      shadow-sm
+                      transition
+                      hover:bg-blue-700
+                    "
+                  >
+                    Review
+                    <ArrowRight size={17} />
+                  </button>
+                </div>
+              </section>
             )}
 
-            {step === 2 && (
-              <div>
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/10">
-                  <Target size={25} />
-                </div>
-
-                <div className="mt-5 text-center">
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                    Set your daily targets
-                  </h2>
-
-                  <p className="mt-2 text-sm text-gray-500">
-                    You can change these anytime from Settings.
-                  </p>
-                </div>
-
-                <div className="mt-8 space-y-4">
-                  <TargetInput
-                    icon={<BookOpen size={18} />}
-                    label="Study"
-                    value={studyTarget}
-                    suffix="min/day"
-                    min={15}
-                    max={1440}
-                    step={15}
-                    onChange={setStudyTarget}
-                  />
-
-                  <TargetInput
-                    icon={<Droplets size={18} />}
-                    label="Water"
-                    value={waterTarget}
-                    suffix="ml/day"
-                    min={500}
-                    max={10000}
-                    step={250}
-                    onChange={setWaterTarget}
-                  />
-
-                  <TargetInput
-                    icon={<Flag size={18} />}
-                    label="Running"
-                    value={runTarget}
-                    suffix="km/day"
-                    min={1}
-                    max={100}
-                    step={0.5}
-                    onChange={setRunTarget}
-                  />
-
-                  <TargetInput
-                    icon={<Dumbbell size={18} />}
-                    label="Protein"
-                    value={proteinTarget}
-                    suffix="g/day"
-                    min={20}
-                    max={500}
-                    step={5}
-                    onChange={setProteinTarget}
-                  />
-
-                  <TargetInput
-                    icon={<Target size={18} />}
-                    label="Calories"
-                    value={calorieTarget}
-                    suffix="kcal/day"
-                    min={500}
-                    max={10000}
-                    step={50}
-                    onChange={setCalorieTarget}
-                  />
-                </div>
-              </div>
-            )}
-
+            {/* STEP 3 */}
             {step === 3 && (
-              <div>
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-green-50 text-green-600 dark:bg-green-500/10">
-                  <Check size={25} />
-                </div>
+              <section className="animate-in fade-in duration-300">
+                <div className="mb-7 text-center">
+                  <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
+                    <Check size={30} strokeWidth={3} />
+                  </div>
 
-                <div className="mt-5 text-center">
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                    You&apos;re all set
-                  </h2>
+                  <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                    You're all set, {name.trim()}!
+                  </h1>
 
-                  <p className="mt-2 text-sm text-gray-500">
-                    Here&apos;s your initial LifeOS setup.
+                  <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    Here's a quick look at your LifeOS setup.
                   </p>
                 </div>
 
-                <div className="mt-8 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-3">
+                  {/* PROFILE */}
                   <SummaryCard
-                    icon={<BookOpen size={18} />}
-                    label="Study"
-                    value={`${studyTarget} min/day`}
-                  />
+                    icon={<User size={19} />}
+                    title="Profile"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-600 text-sm font-bold text-white">
+                        {avatar ? (
+                          <img
+                            src={avatar}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            onError={(event) => {
+                              event.currentTarget.style.display =
+                                'none';
+                            }}
+                          />
+                        ) : (
+                          getInitials(name)
+                        )}
+                      </div>
 
-                  <SummaryCard
-                    icon={<Droplets size={18} />}
-                    label="Water"
-                    value={`${waterTarget} ml/day`}
-                  />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">
+                          {name.trim()}
+                        </p>
 
-                  <SummaryCard
-                    icon={<Flag size={18} />}
-                    label="Running"
-                    value={`${runTarget} km/day`}
-                  />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          LifeOS profile
+                        </p>
+                      </div>
+                    </div>
+                  </SummaryCard>
 
+                  {/* STUDY */}
                   <SummaryCard
-                    icon={<Dumbbell size={18} />}
-                    label="Protein"
-                    value={`${proteinTarget} g/day`}
-                  />
+                    icon={<BookIcon />}
+                    title="Study"
+                  >
+                    <SummaryValue
+                      value={formatNumber(studyHours)}
+                      unit="hours/day"
+                    />
+                  </SummaryCard>
 
+                  {/* WATER */}
                   <SummaryCard
-                    icon={<Target size={18} />}
-                    label="Calories"
-                    value={`${calorieTarget} kcal/day`}
-                  />
+                    icon={<Droplets size={19} />}
+                    title="Water"
+                  >
+                    <SummaryValue
+                      value={formatNumber(waterLitres)}
+                      unit="litres/day"
+                    />
+                  </SummaryCard>
+
+                  {/* RUN */}
+                  <SummaryCard
+                    icon={<Footprints size={19} />}
+                    title="Running"
+                  >
+                    <SummaryValue
+                      value={formatNumber(runKm)}
+                      unit="km/day"
+                    />
+                  </SummaryCard>
+
+                  {/* PROTEIN */}
+                  <SummaryCard
+                    icon={<Utensils size={19} />}
+                    title="Protein"
+                  >
+                    <SummaryValue
+                      value={formatNumber(proteinGrams, 0)}
+                      unit="g/day"
+                    />
+                  </SummaryCard>
+
+                  {/* CALORIES */}
+                  <SummaryCard
+                    icon={<Flame size={19} />}
+                    title="Calories"
+                  >
+                    <SummaryValue
+                      value={formatNumber(calories, 0)}
+                      unit="kcal/day"
+                    />
+                  </SummaryCard>
                 </div>
 
-                <div className="mt-5 rounded-2xl bg-blue-50 p-4 dark:bg-blue-500/10">
-                  <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">
-                    Your dashboard is ready.
-                  </p>
+                {error && (
+                  <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                    {error}
+                  </div>
+                )}
 
-                  <p className="mt-1 text-xs leading-5 text-blue-600/80 dark:text-blue-300/70">
-                    You can update these targets later from Settings.
-                  </p>
+                <div className="mt-6 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    disabled={saving}
+                    className="
+                      flex
+                      flex-1
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-2xl
+                      border
+                      border-slate-200
+                      bg-white
+                      px-4
+                      py-3.5
+                      text-sm
+                      font-semibold
+                      transition
+                      hover:bg-slate-50
+                      disabled:opacity-50
+                      dark:border-slate-800
+                      dark:bg-slate-900
+                      dark:hover:bg-slate-800
+                    "
+                  >
+                    <ArrowLeft size={17} />
+                    Back
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleComplete}
+                    disabled={saving}
+                    className="
+                      flex
+                      flex-[1.6]
+                      items-center
+                      justify-center
+                      gap-2
+                      rounded-2xl
+                      bg-blue-600
+                      px-4
+                      py-3.5
+                      text-sm
+                      font-semibold
+                      text-white
+                      shadow-sm
+                      transition
+                      hover:bg-blue-700
+                      disabled:cursor-not-allowed
+                      disabled:opacity-60
+                    "
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2
+                          size={17}
+                          className="animate-spin"
+                        />
+                        Setting up...
+                      </>
+                    ) : (
+                      <>
+                        Enter LifeOS
+                        <ArrowRight size={17} />
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
+              </section>
             )}
-
-            {error && (
-              <div className="mt-6 rounded-xl bg-red-50 p-3 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">
-                {error}
-              </div>
-            )}
-
-            <div className="mt-8 flex items-center justify-between gap-3">
-              {step > 1 ? (
-                <button
-                  type="button"
-                  onClick={backStep}
-                  disabled={saving}
-                  className="rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 dark:border-white/10 dark:text-gray-300 dark:hover:bg-white/[0.04]"
-                >
-                  Back
-                </button>
-              ) : (
-                <div />
-              )}
-
-              <button
-                type="button"
-                onClick={nextStep}
-                disabled={
-                  saving ||
-                  (step === 1 &&
-                    !name.trim() &&
-                    !user?.user_metadata?.full_name)
-                }
-                className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving
-                  ? 'Saving...'
-                  : step === 3
-                    ? 'Enter LifeOS'
-                    : 'Continue'}
-
-                {!saving && <ArrowRight size={17} />}
-              </button>
-            </div>
           </div>
-
-          <p className="mt-5 text-center text-xs text-gray-400">
-            Your settings are securely synced with your LifeOS account.
-          </p>
-        </div>
+        </main>
       </div>
     </div>
   );
 }
 
-function TargetInput({
-  icon,
-  label,
-  value,
-  suffix,
-  min,
-  max,
-  step,
-  onChange,
-}: TargetInputProps) {
+/* -------------------------------------------------------------------------- */
+/* COMPONENTS                                                                 */
+/* -------------------------------------------------------------------------- */
+
+function BookIcon() {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/[0.06]">
-        {icon}
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 5.5C4 4.672 4.672 4 5.5 4H11V20H5.5A1.5 1.5 0 0 1 4 18.5v-13Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M20 5.5C20 4.672 19.328 4 18.5 4H13V20h5.5a1.5 1.5 0 0 0 1.5-1.5v-13Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M11 7H8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function TargetCard({
+  icon,
+  title,
+  description,
+  value,
+  unit,
+  placeholder,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  value: string;
+  unit: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      className="
+        rounded-2xl
+        border
+        border-slate-200
+        bg-white
+        p-4
+        shadow-sm
+        dark:border-slate-800
+        dark:bg-slate-900
+      "
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+          {icon}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            {title}
+          </p>
+
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {description}
+          </p>
+        </div>
       </div>
 
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-          {label}
-        </p>
-
-        <p className="text-xs text-gray-400">
-          Daily target
-        </p>
-      </div>
-
-      <div className="flex items-center gap-2">
+      <div className="relative mt-4">
         <input
           type="number"
+          inputMode="decimal"
+          min="0"
+          step="any"
           value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={(event) => {
-            const nextValue = Number(event.target.value);
-
-            onChange(
-              Number.isFinite(nextValue)
-                ? nextValue
-                : min
-            );
-          }}
-          className="w-24 rounded-xl border border-gray-200 bg-white px-3 py-2 text-right text-sm font-bold text-gray-900 outline-none focus:border-blue-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+          placeholder={placeholder}
+          onChange={(event) =>
+            onChange(event.target.value)
+          }
+          className="
+            w-full
+            rounded-xl
+            border
+            border-slate-200
+            bg-slate-50
+            px-3.5
+            py-3
+            pr-20
+            text-base
+            font-semibold
+            outline-none
+            transition
+            placeholder:text-slate-400
+            focus:border-blue-500
+            focus:bg-white
+            dark:border-slate-700
+            dark:bg-slate-800
+            dark:focus:bg-slate-800
+          "
         />
 
-        <span className="hidden w-16 text-xs text-gray-400 sm:block">
-          {suffix}
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+          {unit}
         </span>
       </div>
     </div>
@@ -446,24 +1004,60 @@ function TargetInput({
 
 function SummaryCard({
   icon,
-  label,
-  value,
-}: SummaryCardProps) {
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-gray-200 p-4 dark:border-white/10">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-500/10">
+    <div
+      className="
+        flex
+        items-center
+        gap-3
+        rounded-2xl
+        border
+        border-slate-200
+        bg-white
+        p-4
+        shadow-sm
+        dark:border-slate-800
+        dark:bg-slate-900
+      "
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
         {icon}
       </div>
 
-      <div className="min-w-0">
-        <p className="text-xs text-gray-400">
-          {label}
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+          {title}
         </p>
 
-        <p className="mt-0.5 text-sm font-bold text-gray-900 dark:text-white">
-          {value}
-        </p>
+        {children}
       </div>
+    </div>
+  );
+}
+
+function SummaryValue({
+  value,
+  unit,
+}: {
+  value: string;
+  unit: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-lg font-bold">
+        {value}
+      </span>
+
+      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+        {unit}
+      </span>
     </div>
   );
 }

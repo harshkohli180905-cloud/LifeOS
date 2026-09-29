@@ -1,970 +1,1451 @@
-import { useEffect, useMemo, useState } from 'react';
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+import {
+  Activity,
+  ArrowLeft,
+  ArrowRight,
   BarChart3,
   BookOpen,
   CalendarDays,
-  Clock3,
+  ChevronDown,
   Droplets,
-  Flame,
-  Footprints,
   Dumbbell,
-  Target,
+  Footprints,
+  Flame,
+  Loader2,
+  Trophy,
   TrendingUp,
 } from 'lucide-react';
 
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { getLocalDate } from '../lib/date';
 
-type Range = 7 | 30 | 90;
+type RangeDays = 7 | 30 | 90;
 
-type StudySession = {
-  id: string;
-  started_at: string;
-  duration_seconds: number;
+type StudyRow = {
+  duration_seconds: number | null;
+  started_at: string | null;
 };
 
-type Run = {
-  id: string;
+type RunRow = {
+  distance_km: number | null;
+  duration_seconds: number | null;
   date: string;
-  distance_km: number;
-  duration_seconds: number;
-  calories: number;
 };
 
-type Workout = {
-  id: string;
+type WorkoutRow = {
+  duration_seconds: number | null;
   date: string;
-  duration_seconds: number;
 };
 
-type Meal = {
-  id: string;
+type WaterRow = {
+  amount_ml: number | null;
   date: string;
-  calories: number;
-  protein: number;
 };
 
-type WaterLog = {
-  id: string;
+type MealRow = {
+  calories: number | null;
+  protein: number | null;
   date: string;
-  amount_ml: number;
 };
 
 type DayStats = {
   date: string;
   label: string;
-  studyMinutes: number;
-  runDistance: number;
-  workoutMinutes: number;
+  shortLabel: string;
+  studySeconds: number;
+  runKm: number;
+  workoutSeconds: number;
   waterMl: number;
   calories: number;
   protein: number;
 };
 
-function getLocalDateString(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+type SummaryStats = {
+  studySeconds: number;
+  runKm: number;
+  workoutSeconds: number;
+  waterMl: number;
+  calories: number;
+  protein: number;
+};
 
-  return `${year}-${month}-${day}`;
+const RANGE_OPTIONS: RangeDays[] = [7, 30, 90];
+
+
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+
+  return new Date(year, month - 1, day);
 }
 
+function addDays(date: string, amount: number) {
+  const next = parseLocalDate(date);
+  next.setDate(next.getDate() + amount);
 
-
-function formatMinutes(minutes: number) {
-  if (minutes < 60) {
-    return `${Math.round(minutes)}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remaining = Math.round(minutes % 60);
-
-  if (remaining === 0) {
-    return `${hours}h`;
-  }
-
-  return `${hours}h ${remaining}m`;
+  return getLocalDate(next);
 }
 
-function formatStudyTime(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${minutes}m`;
+function formatDateLabel(date: string) {
+  return parseLocalDate(date).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
-function AnalyticsView() {
-  const { user } = useAuth();
+function formatHours(seconds: number) {
+  const hours = seconds / 3600;
 
-  const [range, setRange] = useState<Range>(7);
+  if (hours === 0) {
+    return '0 h';
+  }
 
-  const [studySessions, setStudySessions] = useState<
-    StudySession[]
-  >([]);
+  if (hours < 10) {
+    return `${hours.toFixed(1)} h`;
+  }
 
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [meals, setMeals] = useState<Meal[]>([]);
-  const [waterLogs, setWaterLogs] = useState<WaterLog[]>([]);
+  return `${hours.toFixed(0)} h`;
+}
 
-  const [loading, setLoading] = useState(true);
+function formatLiters(ml: number) {
+  return `${(ml / 1000).toFixed(ml >= 10000 ? 0 : 1)} L`;
+}
 
-  const loadAnalytics = async () => {
-    if (!user) return;
+function formatNumber(value: number) {
+  return value.toLocaleString('en-IN', {
+    maximumFractionDigits: 0,
+  });
+}
 
-    setLoading(true);
+function formatRangeLabel(start: string, end: string) {
+  return `${formatDateLabel(start)} – ${formatDateLabel(end)}`;
+}
 
-    const endDate = new Date();
-    endDate.setHours(23, 59, 59, 999);
+function createEmptyDay(date: string): DayStats {
+  const parsed = parseLocalDate(date);
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - (range - 1));
-    startDate.setHours(0, 0, 0, 0);
-
-    const startDateString = getLocalDateString(startDate);
-    const endDateString = getLocalDateString(endDate);
-
-    const [
-      studyResult,
-      runsResult,
-      workoutsResult,
-      mealsResult,
-      waterResult,
-    ] = await Promise.all([
-      supabase
-        .from('study_sessions')
-        .select('id, started_at, duration_seconds')
-        .eq('user_id', user.id)
-        .gte('started_at', startDate.toISOString())
-        .lte('started_at', endDate.toISOString())
-        .order('started_at', { ascending: true }),
-
-      supabase
-        .from('runs')
-        .select(
-          'id, date, distance_km, duration_seconds, calories'
-        )
-        .eq('user_id', user.id)
-        .gte('date', startDateString)
-        .lte('date', endDateString)
-        .order('date', { ascending: true }),
-
-      supabase
-        .from('workouts')
-        .select('id, date, duration_seconds')
-        .eq('user_id', user.id)
-        .gte('date', startDateString)
-        .lte('date', endDateString)
-        .order('date', { ascending: true }),
-
-      supabase
-        .from('meals')
-        .select('id, date, calories, protein')
-        .eq('user_id', user.id)
-        .gte('date', startDateString)
-        .lte('date', endDateString)
-        .order('date', { ascending: true }),
-
-      supabase
-        .from('water_logs')
-        .select('id, date, amount_ml')
-        .eq('user_id', user.id)
-        .gte('date', startDateString)
-        .lte('date', endDateString)
-        .order('date', { ascending: true }),
-    ]);
-
-    if (studyResult.error) {
-      console.error(
-        'Analytics study error:',
-        studyResult.error
-      );
-    }
-
-    if (runsResult.error) {
-      console.error(
-        'Analytics runs error:',
-        runsResult.error
-      );
-    }
-
-    if (workoutsResult.error) {
-      console.error(
-        'Analytics workout error:',
-        workoutsResult.error
-      );
-    }
-
-    if (mealsResult.error) {
-      console.error(
-        'Analytics meals error:',
-        mealsResult.error
-      );
-    }
-
-    if (waterResult.error) {
-      console.error(
-        'Analytics water error:',
-        waterResult.error
-      );
-    }
-
-    setStudySessions(
-      (studyResult.data ?? []) as StudySession[]
-    );
-
-    setRuns((runsResult.data ?? []) as Run[]);
-    setWorkouts((workoutsResult.data ?? []) as Workout[]);
-    setMeals((mealsResult.data ?? []) as Meal[]);
-    setWaterLogs((waterResult.data ?? []) as WaterLog[]);
-
-    setLoading(false);
+  return {
+    date,
+    label: parsed.toLocaleDateString('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+    }),
+    shortLabel: parsed.toLocaleDateString('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }),
+    studySeconds: 0,
+    runKm: 0,
+    workoutSeconds: 0,
+    waterMl: 0,
+    calories: 0,
+    protein: 0,
   };
+}
 
-  useEffect(() => {
-    loadAnalytics();
-  }, [user, range]);
+function getInitialStartDate(days: RangeDays) {
+  return addDays(getLocalDate(), -(days - 1));
+}
 
-  const dayStats = useMemo(() => {
-    const days: DayStats[] = [];
+function MetricCard({
+  icon,
+  title,
+  value,
+  subtitle,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  value: string;
+  subtitle: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+        <span className="shrink-0">{icon}</span>
 
-    const today = new Date();
+        <span className="truncate">{title}</span>
+      </div>
 
-    for (let i = range - 1; i >= 0; i -= 1) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
+      <div className="mt-3 truncate text-2xl font-bold text-slate-900 dark:text-white">
+        {value}
+      </div>
 
-      const dateString = getLocalDateString(date);
+      <div className="mt-1 truncate text-xs text-slate-400">
+        {subtitle}
+      </div>
+    </div>
+  );
+}
 
-      const studySeconds = studySessions
-        .filter((session) => {
-          const sessionDate = getLocalDateString(
-            new Date(session.started_at)
-          );
-
-          return sessionDate === dateString;
-        })
-        .reduce(
-          (sum, session) =>
-            sum + Number(session.duration_seconds || 0),
-          0
-        );
-
-      const runDistance = runs
-        .filter((run) => run.date === dateString)
-        .reduce(
-          (sum, run) => sum + Number(run.distance_km || 0),
-          0
-        );
-
-      const workoutSeconds = workouts
-        .filter((workout) => workout.date === dateString)
-        .reduce(
-          (sum, workout) =>
-            sum + Number(workout.duration_seconds || 0),
-          0
-        );
-
-      const water = waterLogs
-        .filter((log) => log.date === dateString)
-        .reduce(
-          (sum, log) => sum + Number(log.amount_ml || 0),
-          0
-        );
-
-      const calories = meals
-        .filter((meal) => meal.date === dateString)
-        .reduce(
-          (sum, meal) => sum + Number(meal.calories || 0),
-          0
-        );
-
-      const protein = meals
-        .filter((meal) => meal.date === dateString)
-        .reduce(
-          (sum, meal) => sum + Number(meal.protein || 0),
-          0
-        );
-
-      days.push({
-        date: dateString,
-        label: date.toLocaleDateString('en-IN', {
-          day: 'numeric',
-          month: 'short',
-        }),
-        studyMinutes: studySeconds / 60,
-        runDistance,
-        workoutMinutes: workoutSeconds / 60,
-        waterMl: water,
-        calories,
-        protein,
-      });
-    }
-
-    return days;
-  }, [
-    range,
-    studySessions,
-    runs,
-    workouts,
-    meals,
-    waterLogs,
-  ]);
-
-  const totals = useMemo(() => {
-    return {
-      studySeconds: studySessions.reduce(
-        (sum, session) =>
-          sum + Number(session.duration_seconds || 0),
-        0
-      ),
-
-      runDistance: runs.reduce(
-        (sum, run) => sum + Number(run.distance_km || 0),
-        0
-      ),
-
-      runCalories: runs.reduce(
-        (sum, run) => sum + Number(run.calories || 0),
-        0
-      ),
-
-      workoutSeconds: workouts.reduce(
-        (sum, workout) =>
-          sum + Number(workout.duration_seconds || 0),
-        0
-      ),
-
-      waterMl: waterLogs.reduce(
-        (sum, log) => sum + Number(log.amount_ml || 0),
-        0
-      ),
-
-      calories: meals.reduce(
-        (sum, meal) => sum + Number(meal.calories || 0),
-        0
-      ),
-
-      protein: meals.reduce(
-        (sum, meal) => sum + Number(meal.protein || 0),
-        0
-      ),
-    };
-  }, [
-    studySessions,
-    runs,
-    workouts,
-    meals,
-    waterLogs,
-  ]);
-
-  const averages = useMemo(() => {
-    const divisor = Math.max(dayStats.length, 1);
-
-    return {
-      studyMinutes: totals.studySeconds / 60 / divisor,
-      runDistance: totals.runDistance / divisor,
-      workoutMinutes: totals.workoutSeconds / 60 / divisor,
-      waterMl: totals.waterMl / divisor,
-      calories: totals.calories / divisor,
-      protein: totals.protein / divisor,
-    };
-  }, [dayStats.length, totals]);
-
-  const activeDays = useMemo(() => {
-    return dayStats.filter(
-      (day) =>
-        day.studyMinutes > 0 ||
-        day.runDistance > 0 ||
-        day.workoutMinutes > 0 ||
-        day.waterMl > 0 ||
-        day.calories > 0
-    ).length;
-  }, [dayStats]);
-
-  const bestStudyDay = useMemo(() => {
-    return [...dayStats].sort(
-      (a, b) => b.studyMinutes - a.studyMinutes
-    )[0];
-  }, [dayStats]);
-
-  const maxStudy = Math.max(
-    ...dayStats.map((day) => day.studyMinutes),
-    1
+function MiniBarChart({
+  data,
+  valueKey,
+  maxValue,
+  suffix = '',
+  decimals = 0,
+  emptyText = 'No data',
+}: {
+  data: DayStats[];
+  valueKey:
+    | 'studySeconds'
+    | 'runKm'
+    | 'workoutSeconds'
+    | 'waterMl'
+    | 'calories'
+    | 'protein';
+  maxValue: number;
+  suffix?: string;
+  decimals?: number;
+  emptyText?: string;
+}) {
+  const hasData = data.some(
+    (item) => Number(item[valueKey]) > 0,
   );
 
-  const maxRun = Math.max(
-    ...dayStats.map((day) => day.runDistance),
-    1
-  );
-
-  const maxWorkout = Math.max(
-    ...dayStats.map((day) => day.workoutMinutes),
-    1
-  );
-
-  const maxWater = Math.max(
-    ...dayStats.map((day) => day.waterMl),
-    1
-  );
-
-  const maxCalories = Math.max(
-    ...dayStats.map((day) => day.calories),
-    1
-  );
-
-  if (loading) {
+  if (!hasData) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-black dark:border-white/20 dark:border-t-white" />
-
-          <p className="mt-3 text-sm text-gray-500">
-            Loading analytics...
-          </p>
-        </div>
+      <div className="flex h-48 items-center justify-center text-sm text-slate-400">
+        {emptyText}
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-24 md:pb-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
-              <BarChart3 size={22} />
-            </div>
+    <div className="flex h-48 items-end gap-1 overflow-hidden sm:gap-2">
+      {data.map((item) => {
+        const rawValue = Number(item[valueKey]);
 
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white md:text-3xl">
-                Analytics
-              </h1>
+        const height =
+          maxValue > 0
+            ? Math.max(
+                rawValue > 0 ? 4 : 0,
+                Math.min(100, (rawValue / maxValue) * 100),
+              )
+            : 0;
 
-              <p className="mt-1 text-sm text-gray-500">
-                Understand your progress and daily patterns.
-              </p>
-            </div>
-          </div>
-        </div>
+        const displayValue =
+          valueKey === 'studySeconds'
+            ? formatHours(rawValue)
+            : valueKey === 'workoutSeconds'
+              ? formatHours(rawValue)
+              : `${rawValue.toFixed(decimals)}${suffix}`;
 
-        {/* Range */}
-        <div className="flex rounded-xl border border-gray-200 bg-white p-1 dark:border-white/10 dark:bg-[#141414]">
-          {([7, 30, 90] as Range[]).map((value) => (
-            <button
-              key={value}
-              onClick={() => setRange(value)}
-              className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                range === value
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5'
-              }`}
-            >
-              {value}D
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414]">
-          <div className="flex items-center justify-between">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
-              <BookOpen size={18} />
-            </div>
-
-            <span className="text-[11px] font-medium text-gray-400">
-              STUDY
-            </span>
-          </div>
-
-          <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
-            {formatStudyTime(totals.studySeconds)}
-          </p>
-
-          <p className="mt-1 text-xs text-gray-500">
-            {Math.round(averages.studyMinutes)} min/day average
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414]">
-          <div className="flex items-center justify-between">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400">
-              <Footprints size={18} />
-            </div>
-
-            <span className="text-[11px] font-medium text-gray-400">
-              RUNNING
-            </span>
-          </div>
-
-          <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
-            {totals.runDistance.toFixed(1)} km
-          </p>
-
-          <p className="mt-1 text-xs text-gray-500">
-            {averages.runDistance.toFixed(1)} km/day average
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414]">
-          <div className="flex items-center justify-between">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-500/10 dark:text-purple-400">
-              <Dumbbell size={18} />
-            </div>
-
-            <span className="text-[11px] font-medium text-gray-400">
-              WORKOUT
-            </span>
-          </div>
-
-          <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
-            {formatMinutes(totals.workoutSeconds / 60)}
-          </p>
-
-          <p className="mt-1 text-xs text-gray-500">
-            {Math.round(averages.workoutMinutes)} min/day average
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414]">
-          <div className="flex items-center justify-between">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-100 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-400">
-              <Droplets size={18} />
-            </div>
-
-            <span className="text-[11px] font-medium text-gray-400">
-              WATER
-            </span>
-          </div>
-
-          <p className="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
-            {(totals.waterMl / 1000).toFixed(1)} L
-          </p>
-
-          <p className="mt-1 text-xs text-gray-500">
-            {Math.round(averages.waterMl)} ml/day average
-          </p>
-        </div>
-      </div>
-
-      {/* Study chart */}
-      <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <BookOpen
-                size={18}
-                className="text-blue-500"
-              />
-
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Study activity
-              </h2>
-            </div>
-
-            <p className="mt-1 text-xs text-gray-500">
-              Minutes studied each day.
-            </p>
-          </div>
-
-          {bestStudyDay && bestStudyDay.studyMinutes > 0 && (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <TrendingUp size={14} />
-              Best: {bestStudyDay.label} ·{' '}
-              {formatMinutes(bestStudyDay.studyMinutes)}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 overflow-x-auto">
+        return (
           <div
-            className="flex min-w-[520px] items-end gap-2"
-            style={{ height: 220 }}
+            key={item.date}
+            className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end"
           >
-            {dayStats.map((day) => {
-              const height =
-                (day.studyMinutes / maxStudy) * 170;
+            <div className="relative flex w-full justify-center">
+              <div className="absolute bottom-full z-20 mb-2 hidden whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[10px] text-white group-hover:block">
+                {displayValue}
+              </div>
 
-              return (
-                <div
-                  key={day.date}
-                  className="flex min-w-[38px] flex-1 flex-col items-center justify-end gap-2"
-                >
-                  <span className="text-[9px] font-medium text-gray-400">
-                    {day.studyMinutes > 0
-                      ? Math.round(day.studyMinutes)
-                      : ''}
-                  </span>
+              <div
+                className="w-full max-w-8 rounded-t-md bg-slate-900 transition-all duration-300 dark:bg-white sm:max-w-10"
+                style={{
+                  height: `${height}%`,
+                  minHeight: rawValue > 0 ? '4px' : '0px',
+                }}
+              />
+            </div>
 
-                  <div
-                    className="w-full max-w-[34px] rounded-t-lg bg-blue-500 transition-all"
-                    style={{
-                      height: `${Math.max(height, day.studyMinutes > 0 ? 6 : 2)}px`,
-                    }}
-                  />
-
-                  <span className="text-[9px] text-gray-400">
-                    {day.label}
-                  </span>
-                </div>
-              );
-            })}
+            <div className="mt-2 max-w-full truncate text-[9px] text-slate-400 sm:text-[10px]">
+              {item.label}
+            </div>
           </div>
-        </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TrendRow({
+  icon,
+  title,
+  value,
+  suffix = '',
+}: {
+  icon: React.ReactNode;
+  title: string;
+  value: number;
+  suffix?: string;
+}) {
+  const displayValue =
+    value >= 10 ? value.toFixed(0) : value.toFixed(1);
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        {icon}
       </div>
 
-      {/* Activity charts */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Running */}
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-          <div className="flex items-center gap-2">
-            <Footprints
-              size={18}
-              className="text-orange-500"
-            />
-
-            <div>
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Running
-              </h2>
-
-              <p className="text-xs text-gray-500">
-                Distance by day.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 overflow-x-auto">
-            <div
-              className="flex min-w-[420px] items-end gap-2"
-              style={{ height: 180 }}
-            >
-              {dayStats.map((day) => {
-                const height =
-                  (day.runDistance / maxRun) * 130;
-
-                return (
-                  <div
-                    key={day.date}
-                    className="flex min-w-[30px] flex-1 flex-col items-center justify-end gap-2"
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t-md bg-orange-500"
-                      style={{
-                        height: `${Math.max(
-                          height,
-                          day.runDistance > 0 ? 5 : 2
-                        )}px`,
-                      }}
-                    />
-
-                    <span className="text-[8px] text-gray-400">
-                      {day.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-white/5">
-            <span className="text-xs text-gray-500">
-              Total distance
-            </span>
-
-            <span className="font-semibold text-gray-900 dark:text-white">
-              {totals.runDistance.toFixed(1)} km
-            </span>
-          </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
+          {title}
         </div>
 
-        {/* Workout */}
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-          <div className="flex items-center gap-2">
-            <Dumbbell
-              size={18}
-              className="text-purple-500"
-            />
-
-            <div>
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Workout
-              </h2>
-
-              <p className="text-xs text-gray-500">
-                Training minutes by day.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 overflow-x-auto">
-            <div
-              className="flex min-w-[420px] items-end gap-2"
-              style={{ height: 180 }}
-            >
-              {dayStats.map((day) => {
-                const height =
-                  (day.workoutMinutes / maxWorkout) * 130;
-
-                return (
-                  <div
-                    key={day.date}
-                    className="flex min-w-[30px] flex-1 flex-col items-center justify-end gap-2"
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t-md bg-purple-500"
-                      style={{
-                        height: `${Math.max(
-                          height,
-                          day.workoutMinutes > 0 ? 5 : 2
-                        )}px`,
-                      }}
-                    />
-
-                    <span className="text-[8px] text-gray-400">
-                      {day.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-white/5">
-            <span className="text-xs text-gray-500">
-              Total training
-            </span>
-
-            <span className="font-semibold text-gray-900 dark:text-white">
-              {formatMinutes(totals.workoutSeconds / 60)}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Health analytics */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Water */}
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-          <div className="flex items-center gap-2">
-            <Droplets
-              size={18}
-              className="text-cyan-500"
-            />
-
-            <div>
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Hydration
-              </h2>
-
-              <p className="text-xs text-gray-500">
-                Daily water intake.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 overflow-x-auto">
-            <div
-              className="flex min-w-[420px] items-end gap-2"
-              style={{ height: 180 }}
-            >
-              {dayStats.map((day) => {
-                const height =
-                  (day.waterMl / maxWater) * 130;
-
-                return (
-                  <div
-                    key={day.date}
-                    className="flex min-w-[30px] flex-1 flex-col items-center justify-end gap-2"
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t-md bg-cyan-500"
-                      style={{
-                        height: `${Math.max(
-                          height,
-                          day.waterMl > 0 ? 5 : 2
-                        )}px`,
-                      }}
-                    />
-
-                    <span className="text-[8px] text-gray-400">
-                      {day.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-white/5">
-            <span className="text-xs text-gray-500">
-              Average intake
-            </span>
-
-            <span className="font-semibold text-gray-900 dark:text-white">
-              {Math.round(averages.waterMl)} ml/day
-            </span>
-          </div>
-        </div>
-
-        {/* Nutrition */}
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-          <div className="flex items-center gap-2">
-            <Flame
-              size={18}
-              className="text-green-500"
-            />
-
-            <div>
-              <h2 className="font-bold text-gray-900 dark:text-white">
-                Nutrition
-              </h2>
-
-              <p className="text-xs text-gray-500">
-                Daily calorie intake.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 overflow-x-auto">
-            <div
-              className="flex min-w-[420px] items-end gap-2"
-              style={{ height: 180 }}
-            >
-              {dayStats.map((day) => {
-                const height =
-                  (day.calories / maxCalories) * 130;
-
-                return (
-                  <div
-                    key={day.date}
-                    className="flex min-w-[30px] flex-1 flex-col items-center justify-end gap-2"
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t-md bg-green-500"
-                      style={{
-                        height: `${Math.max(
-                          height,
-                          day.calories > 0 ? 5 : 2
-                        )}px`,
-                      }}
-                    />
-
-                    <span className="text-[8px] text-gray-400">
-                      {day.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-4 border-t border-gray-100 pt-4 dark:border-white/5">
-            <div>
-              <p className="text-xs text-gray-500">
-                Avg calories
-              </p>
-
-              <p className="mt-1 font-semibold text-gray-900 dark:text-white">
-                {Math.round(averages.calories)} kcal
-              </p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">
-                Avg protein
-              </p>
-
-              <p className="mt-1 font-semibold text-gray-900 dark:text-white">
-                {Math.round(averages.protein)} g
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Summary */}
-      <div className="rounded-3xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-[#141414] md:p-6">
-        <div className="flex items-center gap-2">
-          <Target
-            size={18}
-            className="text-yellow-500"
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <div
+            className="h-full rounded-full bg-slate-900 dark:bg-white"
+            style={{
+              width: `${Math.min(100, value > 0 ? 100 : 0)}%`,
+            }}
           />
+        </div>
+      </div>
 
-          <div>
-            <h2 className="font-bold text-gray-900 dark:text-white">
-              Period summary
-            </h2>
-
-            <p className="text-xs text-gray-500">
-              Your activity across the selected period.
-            </p>
-          </div>
+      <div className="shrink-0 text-right">
+        <div className="text-sm font-bold text-slate-900 dark:text-white">
+          {displayValue}
+          {suffix}
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div className="rounded-2xl bg-gray-50 p-4 dark:bg-white/[0.03]">
-            <div className="flex items-center gap-2 text-gray-500">
-              <Clock3 size={15} />
-              <span className="text-xs">
-                Study
-              </span>
-            </div>
-
-            <p className="mt-2 font-bold text-gray-900 dark:text-white">
-              {formatStudyTime(totals.studySeconds)}
-            </p>
-          </div>
-
-          <div className="rounded-2xl bg-gray-50 p-4 dark:bg-white/[0.03]">
-            <div className="flex items-center gap-2 text-gray-500">
-              <Footprints size={15} />
-              <span className="text-xs">
-                Runs
-              </span>
-            </div>
-
-            <p className="mt-2 font-bold text-gray-900 dark:text-white">
-              {runs.length}
-            </p>
-          </div>
-
-          <div className="rounded-2xl bg-gray-50 p-4 dark:bg-white/[0.03]">
-            <div className="flex items-center gap-2 text-gray-500">
-              <CalendarDays size={15} />
-              <span className="text-xs">
-                Active days
-              </span>
-            </div>
-
-            <p className="mt-2 font-bold text-gray-900 dark:text-white">
-              {activeDays}/{range}
-            </p>
-          </div>
-
-          <div className="rounded-2xl bg-gray-50 p-4 dark:bg-white/[0.03]">
-            <div className="flex items-center gap-2 text-gray-500">
-              <Flame size={15} />
-              <span className="text-xs">
-                Run calories
-              </span>
-            </div>
-
-            <p className="mt-2 font-bold text-gray-900 dark:text-white">
-              {Math.round(totals.runCalories)} kcal
-            </p>
-          </div>
+        <div className="text-[10px] text-slate-400">
+          avg/day
         </div>
       </div>
     </div>
   );
 }
 
-export default AnalyticsView;
+function TodayValue({
+  title,
+  value,
+}: {
+  title: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/60">
+      <div className="text-xs text-slate-400">
+        {title}
+      </div>
+
+      <div className="mt-1 truncate font-bold text-slate-900 dark:text-white">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function DarkSummary({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4">
+      <div className="text-xs text-slate-300">
+        {label}
+      </div>
+
+      <div className="mt-1 truncate font-bold">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+export default function AnalyticsView() {
+  const { user } = useAuth();
+
+  const today = getLocalDate();
+
+  const [rangeDays, setRangeDays] =
+    useState<RangeDays>(7);
+
+  const [rangeStart, setRangeStart] =
+    useState<string>(
+      getInitialStartDate(7),
+    );
+
+  const [days, setDays] =
+    useState<DayStats[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const [mobileMetric, setMobileMetric] =
+    useState<
+      | 'study'
+      | 'running'
+      | 'workout'
+      | 'water'
+      | 'calories'
+      | 'protein'
+    >('study');
+
+  const rangeEnd = addDays(
+    rangeStart,
+    rangeDays - 1,
+  );
+
+  const loadAnalytics = useCallback(
+    async () => {
+      if (!user) {
+        setDays([]);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const startDate = rangeStart;
+        const endDate = rangeEnd;
+
+        const startDateTime =
+          `${startDate}T00:00:00`;
+
+        const endDateTime =
+          `${addDays(endDate, 1)}T00:00:00`;
+
+        const [
+          studyResult,
+          runsResult,
+          workoutsResult,
+          waterResult,
+          mealsResult,
+        ] = await Promise.all([
+          supabase
+            .from('study_sessions')
+            .select(
+              'duration_seconds, started_at',
+            )
+            .eq('user_id', user.id)
+            .gte(
+              'started_at',
+              startDateTime,
+            )
+            .lt(
+              'started_at',
+              endDateTime,
+            ),
+
+          supabase
+            .from('runs')
+            .select(
+              'distance_km, duration_seconds, date',
+            )
+            .eq('user_id', user.id)
+            .gte('date', startDate)
+            .lte('date', endDate),
+
+          supabase
+            .from('workouts')
+            .select(
+              'duration_seconds, date',
+            )
+            .eq('user_id', user.id)
+            .gte('date', startDate)
+            .lte('date', endDate),
+
+          supabase
+            .from('water_logs')
+            .select(
+              'amount_ml, date',
+            )
+            .eq('user_id', user.id)
+            .gte('date', startDate)
+            .lte('date', endDate),
+
+          supabase
+            .from('meals')
+            .select(
+              'calories, protein, date',
+            )
+            .eq('user_id', user.id)
+            .gte('date', startDate)
+            .lte('date', endDate),
+        ]);
+
+        const errors = [
+          studyResult.error,
+          runsResult.error,
+          workoutsResult.error,
+          waterResult.error,
+          mealsResult.error,
+        ].filter(Boolean);
+
+        if (errors.length > 0) {
+          console.error(
+            'Analytics errors:',
+            errors,
+          );
+
+          throw new Error(
+            'Unable to load analytics data.',
+          );
+        }
+
+        const map =
+          new Map<string, DayStats>();
+
+        for (
+          let i = 0;
+          i < rangeDays;
+          i++
+        ) {
+          const date =
+            addDays(startDate, i);
+
+          map.set(
+            date,
+            createEmptyDay(date),
+          );
+        }
+
+        const studyRows =
+          (studyResult.data ??
+            []) as StudyRow[];
+
+        studyRows.forEach((row) => {
+          if (!row.started_at) {
+            return;
+          }
+
+          const date =
+            getLocalDate(
+              new Date(row.started_at),
+            );
+
+          const item =
+            map.get(date);
+
+          if (!item) {
+            return;
+          }
+
+          item.studySeconds +=
+            Number(
+              row.duration_seconds ??
+                0,
+            );
+        });
+
+        const runRows =
+          (runsResult.data ??
+            []) as RunRow[];
+
+        runRows.forEach((row) => {
+          const item =
+            map.get(row.date);
+
+          if (!item) {
+            return;
+          }
+
+          item.runKm +=
+            Number(
+              row.distance_km ?? 0,
+            );
+        });
+
+        const workoutRows =
+          (workoutsResult.data ??
+            []) as WorkoutRow[];
+
+        workoutRows.forEach(
+          (row) => {
+            const item =
+              map.get(row.date);
+
+            if (!item) {
+              return;
+            }
+
+            item.workoutSeconds +=
+              Number(
+                row.duration_seconds ??
+                  0,
+              );
+          },
+        );
+
+        const waterRows =
+          (waterResult.data ??
+            []) as WaterRow[];
+
+        waterRows.forEach((row) => {
+          const item =
+            map.get(row.date);
+
+          if (!item) {
+            return;
+          }
+
+          item.waterMl +=
+            Number(
+              row.amount_ml ?? 0,
+            );
+        });
+
+        const mealRows =
+          (mealsResult.data ??
+            []) as MealRow[];
+
+        mealRows.forEach((row) => {
+          const item =
+            map.get(row.date);
+
+          if (!item) {
+            return;
+          }
+
+          item.calories +=
+            Number(
+              row.calories ?? 0,
+            );
+
+          item.protein +=
+            Number(
+              row.protein ?? 0,
+            );
+        });
+
+        setDays(
+          Array.from(map.values()),
+        );
+      } catch (loadError) {
+        console.error(
+          'Analytics load error:',
+          loadError,
+        );
+
+        setError(
+          'Unable to load analytics right now.',
+        );
+
+        setDays([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      user,
+      rangeStart,
+      rangeEnd,
+      rangeDays,
+    ],
+  );
+
+  useEffect(() => {
+    void loadAnalytics();
+  }, [loadAnalytics]);
+
+  const goPrevious = () => {
+    setRangeStart(
+      addDays(
+        rangeStart,
+        -rangeDays,
+      ),
+    );
+  };
+
+  const goNext = () => {
+    const nextStart =
+      addDays(
+        rangeStart,
+        rangeDays,
+      );
+
+    if (nextStart > today) {
+      return;
+    }
+
+    setRangeStart(nextStart);
+  };
+
+  const goCurrent = () => {
+    setRangeStart(
+      getInitialStartDate(
+        rangeDays,
+      ),
+    );
+  };
+
+  const canGoNext =
+    addDays(
+      rangeStart,
+      rangeDays,
+    ) <= today;
+
+  const summary =
+    useMemo<SummaryStats>(
+      () =>
+        days.reduce(
+          (acc, item) => {
+            acc.studySeconds +=
+              item.studySeconds;
+
+            acc.runKm +=
+              item.runKm;
+
+            acc.workoutSeconds +=
+              item.workoutSeconds;
+
+            acc.waterMl +=
+              item.waterMl;
+
+            acc.calories +=
+              item.calories;
+
+            acc.protein +=
+              item.protein;
+
+            return acc;
+          },
+          {
+            studySeconds: 0,
+            runKm: 0,
+            workoutSeconds: 0,
+            waterMl: 0,
+            calories: 0,
+            protein: 0,
+          },
+        ),
+      [days],
+    );
+
+  const averages =
+    useMemo(
+      () => {
+        const count =
+          Math.max(
+            1,
+            days.length,
+          );
+
+        return {
+          studySeconds:
+            summary.studySeconds /
+            count,
+
+          runKm:
+            summary.runKm /
+            count,
+
+          workoutSeconds:
+            summary.workoutSeconds /
+            count,
+
+          waterMl:
+            summary.waterMl /
+            count,
+
+          calories:
+            summary.calories /
+            count,
+
+          protein:
+            summary.protein /
+            count,
+        };
+      },
+      [days, summary],
+    );
+
+  const chartValues =
+    useMemo(() => {
+      return days.map(
+        (item) => {
+          switch (
+            mobileMetric
+          ) {
+            case 'study':
+              return (
+                item.studySeconds /
+                3600
+              );
+
+            case 'running':
+              return item.runKm;
+
+            case 'workout':
+              return (
+                item.workoutSeconds /
+                3600
+              );
+
+            case 'water':
+              return (
+                item.waterMl /
+                1000
+              );
+
+            case 'calories':
+              return item.calories;
+
+            case 'protein':
+              return item.protein;
+
+            default:
+              return 0;
+          }
+        },
+      );
+    }, [days, mobileMetric]);
+
+  const chartMax =
+    Math.max(
+      1,
+      ...chartValues,
+    );
+
+  const chartValueKey =
+    mobileMetric === 'study'
+      ? 'studySeconds'
+      : mobileMetric ===
+          'running'
+        ? 'runKm'
+        : mobileMetric ===
+            'workout'
+          ? 'workoutSeconds'
+          : mobileMetric ===
+              'water'
+            ? 'waterMl'
+            : mobileMetric ===
+                'calories'
+              ? 'calories'
+              : 'protein';
+
+  const chartMaxRaw =
+    mobileMetric === 'study'
+      ? chartMax * 3600
+      : mobileMetric ===
+          'workout'
+        ? chartMax * 3600
+        : mobileMetric ===
+            'water'
+          ? chartMax * 1000
+          : chartMax;
+
+  const chartSuffix =
+    mobileMetric ===
+    'running'
+      ? ' km'
+      : mobileMetric ===
+          'water'
+        ? ' L'
+        : mobileMetric ===
+            'calories'
+          ? ' kcal'
+          : mobileMetric ===
+              'protein'
+            ? ' g'
+            : '';
+
+  const chartDecimals =
+    mobileMetric ===
+      'running' ||
+    mobileMetric ===
+      'water'
+      ? 1
+      : 0;
+
+  const currentDay =
+    days.find(
+      (item) =>
+        item.date ===
+        today,
+    ) ??
+    createEmptyDay(today);
+
+  const todayHasData =
+    currentDay.studySeconds >
+      0 ||
+    currentDay.runKm >
+      0 ||
+    currentDay.workoutSeconds >
+      0 ||
+    currentDay.waterMl >
+      0 ||
+    currentDay.calories >
+      0 ||
+    currentDay.protein >
+      0;
+
+  return (
+    <div className="w-full min-w-0 max-w-full space-y-5 overflow-x-hidden">
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 md:p-6">
+        <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+              <BarChart3 size={18} />
+
+              <span className="text-sm font-medium">
+                Performance overview
+              </span>
+            </div>
+
+            <h1 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white md:text-3xl">
+              Analytics
+            </h1>
+
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Track your activity and progress over time.
+            </p>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+            <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+              {RANGE_OPTIONS.map(
+                (option) => (
+                  <button
+                    key={option}
+                    onClick={() => {
+                      setRangeDays(
+                        option,
+                      );
+
+                      setRangeStart(
+                        getInitialStartDate(
+                          option,
+                        ),
+                      );
+                    }}
+                    className={`rounded-lg px-3 py-2 text-xs font-medium transition sm:text-sm ${
+                      rangeDays ===
+                      option
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                        : 'text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {option}d
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            onClick={
+              goPrevious
+            }
+            className="flex h-10 w-full shrink-0 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800 sm:w-10"
+            title="Previous period"
+          >
+            <ArrowLeft size={17} />
+          </button>
+
+          <div className="flex h-10 min-w-0 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 dark:border-slate-800 dark:bg-slate-800/60">
+            <CalendarDays
+              size={15}
+              className="mr-2 shrink-0 text-slate-400"
+            />
+
+            <span className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
+              {formatRangeLabel(
+                rangeStart,
+                rangeEnd,
+              )}
+            </span>
+          </div>
+
+          <button
+            onClick={
+              goCurrent
+            }
+            className="h-10 shrink-0 rounded-xl border border-slate-200 px-4 text-sm font-medium hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+          >
+            Current
+          </button>
+
+          <button
+            onClick={
+              goNext
+            }
+            disabled={!canGoNext}
+            className="flex h-10 w-full shrink-0 items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-800 dark:hover:bg-slate-800 sm:w-10"
+            title="Next period"
+          >
+            <ArrowRight size={17} />
+          </button>
+        </div>
+      </section>
+
+      {loading ? (
+        <div className="flex min-h-72 items-center justify-center rounded-3xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+            <Loader2
+              size={18}
+              className="animate-spin"
+            />
+
+            Loading analytics...
+          </div>
+        </div>
+      ) : error ? (
+        <div className="rounded-3xl border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/20">
+          <div className="font-semibold text-red-700 dark:text-red-400">
+            {error}
+          </div>
+
+          <button
+            onClick={() =>
+              void loadAnalytics()
+            }
+            className="mt-3 text-sm font-semibold text-red-700 underline dark:text-red-400"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+        <>
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            <MetricCard
+              icon={<BookOpen size={17} />}
+              title="Study"
+              value={formatHours(
+                summary.studySeconds,
+              )}
+              subtitle={`${formatHours(
+                averages.studySeconds,
+              )} average/day`}
+            />
+
+            <MetricCard
+              icon={
+                <Footprints size={17} />
+              }
+              title="Running"
+              value={`${summary.runKm.toFixed(
+                1,
+              )} km`}
+              subtitle={`${averages.runKm.toFixed(
+                1,
+              )} km average/day`}
+            />
+
+            <MetricCard
+              icon={
+                <Dumbbell size={17} />
+              }
+              title="Workout"
+              value={formatHours(
+                summary.workoutSeconds,
+              )}
+              subtitle={`${formatHours(
+                averages.workoutSeconds,
+              )} average/day`}
+            />
+
+            <MetricCard
+              icon={
+                <Droplets size={17} />
+              }
+              title="Water"
+              value={formatLiters(
+                summary.waterMl,
+              )}
+              subtitle={`${formatLiters(
+                averages.waterMl,
+              )} average/day`}
+            />
+
+            <MetricCard
+              icon={<Flame size={17} />}
+              title="Calories"
+              value={`${formatNumber(
+                summary.calories,
+              )} kcal`}
+              subtitle={`${formatNumber(
+                averages.calories,
+              )} average/day`}
+            />
+
+            <MetricCard
+              icon={
+                <Activity size={17} />
+              }
+              title="Protein"
+              value={`${formatNumber(
+                summary.protein,
+              )} g`}
+              subtitle={`${formatNumber(
+                averages.protein,
+              )} g average/day`}
+            />
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="font-bold text-slate-900 dark:text-white">
+                  Daily activity
+                </h2>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  One bar for each day in the selected period.
+                </p>
+              </div>
+
+              <div className="relative shrink-0">
+                <select
+                  value={
+                    mobileMetric
+                  }
+                  onChange={(event) =>
+                    setMobileMetric(
+                      event.target
+                        .value as typeof mobileMetric,
+                    )
+                  }
+                  className="h-10 appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-9 text-sm font-medium text-slate-700 outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+                >
+                  <option value="study">
+                    Study
+                  </option>
+
+                  <option value="running">
+                    Running
+                  </option>
+
+                  <option value="workout">
+                    Workout
+                  </option>
+
+                  <option value="water">
+                    Water
+                  </option>
+
+                  <option value="calories">
+                    Calories
+                  </option>
+
+                  <option value="protein">
+                    Protein
+                  </option>
+                </select>
+
+                <ChevronDown
+                  size={14}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 overflow-hidden">
+              <MiniBarChart
+                data={days}
+                valueKey={
+                  chartValueKey
+                }
+                maxValue={
+                  chartMaxRaw
+                }
+                suffix={
+                  chartSuffix
+                }
+                decimals={
+                  chartDecimals
+                }
+              />
+            </div>
+          </section>
+
+          <section className="grid gap-4 lg:grid-cols-2">
+            <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center gap-2">
+                <TrendingUp
+                  size={18}
+                  className="text-slate-500"
+                />
+
+                <div>
+                  <h2 className="font-bold text-slate-900 dark:text-white">
+                    Daily averages
+                  </h2>
+
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    Average activity per day.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-5">
+                <TrendRow
+                  icon={
+                    <BookOpen size={17} />
+                  }
+                  title="Study"
+                  value={
+                    averages.studySeconds /
+                    3600
+                  }
+                  suffix=" h"
+                />
+
+                <TrendRow
+                  icon={
+                    <Footprints size={17} />
+                  }
+                  title="Running"
+                  value={
+                    averages.runKm
+                  }
+                  suffix=" km"
+                />
+
+                <TrendRow
+                  icon={
+                    <Dumbbell size={17} />
+                  }
+                  title="Workout"
+                  value={
+                    averages.workoutSeconds /
+                    3600
+                  }
+                  suffix=" h"
+                />
+
+                <TrendRow
+                  icon={
+                    <Droplets size={17} />
+                  }
+                  title="Water"
+                  value={
+                    averages.waterMl /
+                    1000
+                  }
+                  suffix=" L"
+                />
+              </div>
+            </div>
+
+            <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center gap-2">
+                <Trophy
+                  size={18}
+                  className="text-yellow-500"
+                />
+
+                <div>
+                  <h2 className="font-bold text-slate-900 dark:text-white">
+                    Today
+                  </h2>
+
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    Your current day at a glance.
+                  </p>
+                </div>
+              </div>
+
+              {!todayHasData ? (
+                <div className="mt-6 rounded-2xl border border-dashed border-slate-300 p-6 text-center dark:border-slate-700">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    No activity logged today
+                  </div>
+
+                  <div className="mt-1 text-xs text-slate-400">
+                    Your analytics will update as you log activities.
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <TodayValue
+                    title="Study"
+                    value={formatHours(
+                      currentDay.studySeconds,
+                    )}
+                  />
+
+                  <TodayValue
+                    title="Running"
+                    value={`${currentDay.runKm.toFixed(
+                      1,
+                    )} km`}
+                  />
+
+                  <TodayValue
+                    title="Workout"
+                    value={formatHours(
+                      currentDay.workoutSeconds,
+                    )}
+                  />
+
+                  <TodayValue
+                    title="Water"
+                    value={formatLiters(
+                      currentDay.waterMl,
+                    )}
+                  />
+
+                  <TodayValue
+                    title="Calories"
+                    value={`${formatNumber(
+                      currentDay.calories,
+                    )} kcal`}
+                  />
+
+                  <TodayValue
+                    title="Protein"
+                    value={`${formatNumber(
+                      currentDay.protein,
+                    )} g`}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+            <div>
+              <h2 className="font-bold text-slate-900 dark:text-white">
+                Daily breakdown
+              </h2>
+
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Detailed values for each day.
+              </p>
+            </div>
+
+            <div className="mt-5 overflow-x-auto">
+              <div className="min-w-[620px]">
+                <div className="grid grid-cols-[110px_repeat(6,minmax(80px,1fr))] gap-2 px-3 pb-2 text-[11px] font-medium text-slate-400">
+                  <div>Date</div>
+                  <div>Study</div>
+                  <div>Run</div>
+                  <div>Workout</div>
+                  <div>Water</div>
+                  <div>Calories</div>
+                  <div>Protein</div>
+                </div>
+
+                <div className="space-y-1">
+                  {days
+                    .slice()
+                    .reverse()
+                    .map((item) => (
+                      <div
+                        key={item.date}
+                        className={`grid grid-cols-[110px_repeat(6,minmax(80px,1fr))] gap-2 rounded-xl px-3 py-3 text-sm ${
+                          item.date ===
+                          today
+                            ? 'bg-slate-100 dark:bg-slate-800'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="font-medium text-slate-700 dark:text-slate-300">
+                          {item.date ===
+                          today
+                            ? 'Today'
+                            : item.shortLabel}
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {formatHours(
+                            item.studySeconds,
+                          )}
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {item.runKm.toFixed(
+                            1,
+                          )}{' '}
+                          km
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {formatHours(
+                            item.workoutSeconds,
+                          )}
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {formatLiters(
+                            item.waterMl,
+                          )}
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {formatNumber(
+                            item.calories,
+                          )}{' '}
+                          kcal
+                        </div>
+
+                        <div className="text-slate-600 dark:text-slate-400">
+                          {formatNumber(
+                            item.protein,
+                          )}{' '}
+                          g
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl bg-slate-900 p-5 text-white dark:bg-slate-800 md:p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                <CalendarDays size={19} />
+              </div>
+
+              <div className="min-w-0">
+                <h2 className="font-bold">
+                  Selected period
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-300">
+                  {formatRangeLabel(
+                    rangeStart,
+                    rangeEnd,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <DarkSummary
+                label="Study"
+                value={formatHours(
+                  summary.studySeconds,
+                )}
+              />
+
+              <DarkSummary
+                label="Running"
+                value={`${summary.runKm.toFixed(
+                  1,
+                )} km`}
+              />
+
+              <DarkSummary
+                label="Workout"
+                value={formatHours(
+                  summary.workoutSeconds,
+                )}
+              />
+
+              <DarkSummary
+                label="Water"
+                value={formatLiters(
+                  summary.waterMl,
+                )}
+              />
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
