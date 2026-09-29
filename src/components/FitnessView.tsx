@@ -108,7 +108,17 @@ type WaterForm = {
   date: string;
 };
 
+const RUN_SELECT =
+  'id,date,distance_km,duration_seconds,pace,calories,notes,route_location';
 
+const WORKOUT_SELECT =
+  'id,name,date,duration_seconds,notes';
+
+const MEAL_SELECT =
+  'id,meal_type,name,calories,protein,carbs,fat,date';
+
+const WATER_SELECT =
+  'id,amount_ml,date,created_at';
 
 const formatDate = (value: string) => {
   if (!value) return '—';
@@ -161,7 +171,10 @@ const formatNumber = (value: number, digits = 0) => {
   }).format(Number.isFinite(value) ? value : 0);
 };
 
-const calculatePace = (distance: number, durationSeconds: number) => {
+const calculatePace = (
+  distance: number,
+  durationSeconds: number,
+) => {
   if (!distance || distance <= 0 || !durationSeconds) return null;
 
   return durationSeconds / 60 / distance;
@@ -216,6 +229,26 @@ const emptyWaterForm = (): WaterForm => ({
   amount: '',
   date: getLocalDate(),
 });
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error
+  ) {
+    const message = (error as { message?: unknown }).message;
+
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+
+  return 'Something went wrong. Please try again.';
+};
 
 function SectionHeader({
   icon,
@@ -443,12 +476,51 @@ function EmptyState({
   );
 }
 
+function ErrorBanner({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  if (!message) return null;
+
+  return (
+    <div className="mb-5 flex items-start justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+      <div className="min-w-0">
+        <p className="font-bold">Could not save the activity</p>
+        <p className="mt-0.5 break-words">{message}</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-red-100 dark:hover:bg-red-950/50"
+        aria-label="Dismiss error"
+      >
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
+
+const LIFEOS_DATA_EVENT = 'lifeos-data-changed';
+
+function notifyLifeOSDataChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new Event(LIFEOS_DATA_EVENT),
+    );
+  }
+}
+
 export default function FitnessView() {
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<Tab>('running');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const [runs, setRuns] = useState<Run[]>([]);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -468,19 +540,27 @@ export default function FitnessView() {
   const [waterModal, setWaterModal] = useState(false);
 
   const [editingRunId, setEditingRunId] = useState<string | null>(null);
-  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
-  const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [editingWorkoutId, setEditingWorkoutId] =
+    useState<string | null>(null);
+  const [editingMealId, setEditingMealId] =
+    useState<string | null>(null);
 
   const [runForm, setRunForm] = useState<RunForm>(emptyRunForm);
   const [workoutForm, setWorkoutForm] =
     useState<WorkoutForm>(emptyWorkoutForm);
-  const [mealForm, setMealForm] = useState<MealForm>(emptyMealForm);
-  const [waterForm, setWaterForm] = useState<WaterForm>(emptyWaterForm);
+  const [mealForm, setMealForm] =
+    useState<MealForm>(emptyMealForm);
+  const [waterForm, setWaterForm] =
+    useState<WaterForm>(emptyWaterForm);
 
-  const [selectedDate, setSelectedDate] = useState(getLocalDate());
+  const [selectedDate, setSelectedDate] =
+    useState(getLocalDate());
 
   const loadData = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
 
@@ -494,30 +574,28 @@ export default function FitnessView() {
       ] = await Promise.all([
         supabase
           .from('runs')
-          .select(
-            'id,date,distance_km,duration_seconds,pace,calories,notes,route_location',
-          )
+          .select(RUN_SELECT)
           .eq('user_id', user.id)
           .order('date', { ascending: false })
           .order('created_at', { ascending: false }),
 
         supabase
           .from('workouts')
-          .select('id,name,date,duration_seconds,notes')
+          .select(WORKOUT_SELECT)
           .eq('user_id', user.id)
           .order('date', { ascending: false })
           .order('created_at', { ascending: false }),
 
         supabase
           .from('meals')
-          .select('id,meal_type,name,calories,protein,carbs,fat,date')
+          .select(MEAL_SELECT)
           .eq('user_id', user.id)
           .order('date', { ascending: false })
           .order('created_at', { ascending: false }),
 
         supabase
           .from('water_logs')
-          .select('id,amount_ml,date,created_at')
+          .select(WATER_SELECT)
           .eq('user_id', user.id)
           .order('date', { ascending: false })
           .order('created_at', { ascending: false }),
@@ -531,19 +609,31 @@ export default function FitnessView() {
           .maybeSingle(),
       ]);
 
-      if (runsResult.error) throw runsResult.error;
-      if (workoutsResult.error) throw workoutsResult.error;
-      if (mealsResult.error) throw mealsResult.error;
-      if (waterResult.error) throw waterResult.error;
+      if (!runsResult.error) {
+        setRuns((runsResult.data ?? []) as Run[]);
+      }
 
-      setRuns((runsResult.data ?? []) as Run[]);
-      setWorkouts((workoutsResult.data ?? []) as Workout[]);
-      setMeals((mealsResult.data ?? []) as Meal[]);
-      setWaterLogs((waterResult.data ?? []) as WaterLog[]);
+      if (!workoutsResult.error) {
+        setWorkouts(
+          (workoutsResult.data ?? []) as Workout[],
+        );
+      }
 
-      if (profileResult.data) {
+      if (!mealsResult.error) {
+        setMeals((mealsResult.data ?? []) as Meal[]);
+      }
+
+      if (!waterResult.error) {
+        setWaterLogs(
+          (waterResult.data ?? []) as WaterLog[],
+        );
+      }
+
+      if (!profileResult.error && profileResult.data) {
         setProfile({
-          daily_run_target: Number(profileResult.data.daily_run_target ?? 5),
+          daily_run_target: Number(
+            profileResult.data.daily_run_target ?? 5,
+          ),
           daily_water_target: Number(
             profileResult.data.daily_water_target ?? 3000,
           ),
@@ -555,8 +645,26 @@ export default function FitnessView() {
           ),
         });
       }
+
+      const failedResults = [
+        runsResult,
+        workoutsResult,
+        mealsResult,
+        waterResult,
+        profileResult,
+      ].filter((result) => result.error);
+
+      if (failedResults.length > 0) {
+        const firstError = failedResults[0].error;
+
+        console.error(
+          'Fitness data load error:',
+          firstError,
+        );
+      }
     } catch (error) {
       console.error('Fitness data load error:', error);
+      setErrorMessage(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -567,29 +675,38 @@ export default function FitnessView() {
   }, [loadData]);
 
   const selectedRuns = useMemo(
-    () => runs.filter((run) => run.date === selectedDate),
+    () =>
+      runs.filter((run) => run.date === selectedDate),
     [runs, selectedDate],
   );
 
   const selectedWorkouts = useMemo(
-    () => workouts.filter((workout) => workout.date === selectedDate),
+    () =>
+      workouts.filter(
+        (workout) => workout.date === selectedDate,
+      ),
     [workouts, selectedDate],
   );
 
   const selectedMeals = useMemo(
-    () => meals.filter((meal) => meal.date === selectedDate),
+    () =>
+      meals.filter((meal) => meal.date === selectedDate),
     [meals, selectedDate],
   );
 
   const selectedWaterLogs = useMemo(
-    () => waterLogs.filter((log) => log.date === selectedDate),
+    () =>
+      waterLogs.filter(
+        (log) => log.date === selectedDate,
+      ),
     [waterLogs, selectedDate],
   );
 
   const todayDistance = useMemo(
     () =>
       selectedRuns.reduce(
-        (total, run) => total + Number(run.distance_km || 0),
+        (total, run) =>
+          total + Number(run.distance_km || 0),
         0,
       ),
     [selectedRuns],
@@ -598,7 +715,8 @@ export default function FitnessView() {
   const todayRunCalories = useMemo(
     () =>
       selectedRuns.reduce(
-        (total, run) => total + Number(run.calories || 0),
+        (total, run) =>
+          total + Number(run.calories || 0),
         0,
       ),
     [selectedRuns],
@@ -607,7 +725,8 @@ export default function FitnessView() {
   const todayRunDuration = useMemo(
     () =>
       selectedRuns.reduce(
-        (total, run) => total + Number(run.duration_seconds || 0),
+        (total, run) =>
+          total + Number(run.duration_seconds || 0),
         0,
       ),
     [selectedRuns],
@@ -617,7 +736,8 @@ export default function FitnessView() {
     () =>
       selectedWorkouts.reduce(
         (total, workout) =>
-          total + Number(workout.duration_seconds || 0),
+          total +
+          Number(workout.duration_seconds || 0),
         0,
       ),
     [selectedWorkouts],
@@ -626,7 +746,8 @@ export default function FitnessView() {
   const todayCalories = useMemo(
     () =>
       selectedMeals.reduce(
-        (total, meal) => total + Number(meal.calories || 0),
+        (total, meal) =>
+          total + Number(meal.calories || 0),
         0,
       ),
     [selectedMeals],
@@ -635,7 +756,8 @@ export default function FitnessView() {
   const todayProtein = useMemo(
     () =>
       selectedMeals.reduce(
-        (total, meal) => total + Number(meal.protein || 0),
+        (total, meal) =>
+          total + Number(meal.protein || 0),
         0,
       ),
     [selectedMeals],
@@ -644,7 +766,8 @@ export default function FitnessView() {
   const todayCarbs = useMemo(
     () =>
       selectedMeals.reduce(
-        (total, meal) => total + Number(meal.carbs || 0),
+        (total, meal) =>
+          total + Number(meal.carbs || 0),
         0,
       ),
     [selectedMeals],
@@ -653,7 +776,8 @@ export default function FitnessView() {
   const todayFat = useMemo(
     () =>
       selectedMeals.reduce(
-        (total, meal) => total + Number(meal.fat || 0),
+        (total, meal) =>
+          total + Number(meal.fat || 0),
         0,
       ),
     [selectedMeals],
@@ -662,16 +786,22 @@ export default function FitnessView() {
   const todayWater = useMemo(
     () =>
       selectedWaterLogs.reduce(
-        (total, log) => total + Number(log.amount_ml || 0),
+        (total, log) =>
+          total + Number(log.amount_ml || 0),
         0,
       ),
     [selectedWaterLogs],
   );
 
   const averagePace = useMemo(() => {
-    if (!todayDistance || !todayRunDuration) return null;
+    if (!todayDistance || !todayRunDuration) {
+      return null;
+    }
 
-    return calculatePace(todayDistance, todayRunDuration);
+    return calculatePace(
+      todayDistance,
+      todayRunDuration,
+    );
   }, [todayDistance, todayRunDuration]);
 
   const shiftDate = (days: number) => {
@@ -680,9 +810,14 @@ export default function FitnessView() {
     date.setDate(date.getDate() + days);
 
     const offset = date.getTimezoneOffset();
-    const adjusted = new Date(date.getTime() - offset * 60 * 1000);
 
-    setSelectedDate(adjusted.toISOString().slice(0, 10));
+    const adjusted = new Date(
+      date.getTime() - offset * 60 * 1000,
+    );
+
+    setSelectedDate(
+      adjusted.toISOString().slice(0, 10),
+    );
   };
 
   const resetRunForm = () => {
@@ -720,16 +855,24 @@ export default function FitnessView() {
   };
 
   const openRunModal = (run?: Run) => {
+    setErrorMessage('');
+
     if (run) {
       setEditingRunId(run.id);
 
       setRunForm({
         date: run.date,
-        distance: String(run.distance_km ?? ''),
-        duration: String(
-          Math.round((run.duration_seconds ?? 0) / 60),
+        distance: String(
+          run.distance_km ?? '',
         ),
-        calories: String(run.calories ?? ''),
+        duration: String(
+          Math.round(
+            (run.duration_seconds ?? 0) / 60,
+          ),
+        ),
+        calories: String(
+          run.calories ?? '',
+        ),
         notes: run.notes ?? '',
         route: run.route_location ?? '',
       });
@@ -740,7 +883,11 @@ export default function FitnessView() {
     setRunModal(true);
   };
 
-  const openWorkoutModal = (workout?: Workout) => {
+  const openWorkoutModal = (
+    workout?: Workout,
+  ) => {
+    setErrorMessage('');
+
     if (workout) {
       setEditingWorkoutId(workout.id);
 
@@ -748,7 +895,9 @@ export default function FitnessView() {
         name: workout.name,
         date: workout.date,
         duration: String(
-          Math.round((workout.duration_seconds ?? 0) / 60),
+          Math.round(
+            (workout.duration_seconds ?? 0) / 60,
+          ),
         ),
         notes: workout.notes ?? '',
       });
@@ -760,16 +909,26 @@ export default function FitnessView() {
   };
 
   const openMealModal = (meal?: Meal) => {
+    setErrorMessage('');
+
     if (meal) {
       setEditingMealId(meal.id);
 
       setMealForm({
         mealType: meal.meal_type,
         name: meal.name,
-        calories: String(meal.calories ?? ''),
-        protein: String(meal.protein ?? ''),
-        carbs: String(meal.carbs ?? ''),
-        fat: String(meal.fat ?? ''),
+        calories: String(
+          meal.calories ?? '',
+        ),
+        protein: String(
+          meal.protein ?? '',
+        ),
+        carbs: String(
+          meal.carbs ?? '',
+        ),
+        fat: String(
+          meal.fat ?? '',
+        ),
         date: meal.date,
       });
     } else {
@@ -780,27 +939,42 @@ export default function FitnessView() {
   };
 
   const saveRun = async () => {
-    if (!user) return;
+    if (!user || saving) return;
+
+    setErrorMessage('');
 
     const distance = Number(runForm.distance);
-    const durationMinutes = Number(runForm.duration);
-    const calories = Number(runForm.calories);
+    const durationMinutes = Number(
+      runForm.duration,
+    );
+    const calories = Number(
+      runForm.calories,
+    );
 
     if (
       !runForm.date ||
-      !distance ||
+      !Number.isFinite(distance) ||
       distance <= 0 ||
-      !durationMinutes ||
+      !Number.isFinite(durationMinutes) ||
       durationMinutes <= 0
     ) {
+      setErrorMessage(
+        'Please enter a valid date, distance and duration.',
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const durationSeconds = Math.round(durationMinutes * 60);
-      const pace = calculatePace(distance, durationSeconds);
+      const durationSeconds = Math.round(
+        durationMinutes * 60,
+      );
+
+      const pace = calculatePace(
+        distance,
+        durationSeconds,
+      );
 
       const payload = {
         user_id: user.id,
@@ -808,41 +982,79 @@ export default function FitnessView() {
         distance_km: distance,
         duration_seconds: durationSeconds,
         pace,
-        calories: calories > 0 ? calories : null,
-        notes: runForm.notes.trim() || null,
-        route_location: runForm.route.trim() || null,
-        updated_at: new Date().toISOString(),
+        calories:
+          Number.isFinite(calories) &&
+          calories > 0
+            ? calories
+            : null,
+        notes:
+          runForm.notes.trim() || null,
+        route_location:
+          runForm.route.trim() || null,
+        updated_at:
+          new Date().toISOString(),
       };
 
       if (editingRunId) {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('runs')
           .update(payload)
           .eq('id', editingRunId)
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .select(RUN_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setRuns((current) =>
+            current.map((run) =>
+              run.id === editingRunId ? (data as Run) : run,
+            ),
+          );
+        }
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('runs')
-          .insert(payload);
+          .insert(payload)
+          .select(RUN_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setRuns((current) => [data as Run, ...current]);
+        }
       }
 
       setRunModal(false);
       resetRunForm();
 
-      await loadData();
+      notifyLifeOSDataChanged();
+
+      // Reconcile with the database in the background without blocking the UI.
+      void loadData();
     } catch (error) {
       console.error('Run save error:', error);
+
+      setErrorMessage(
+        `Run could not be saved: ${getErrorMessage(
+          error,
+        )}`,
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const deleteRun = async (id: string) => {
-    if (!user) return;
+    if (!user || saving) return;
+
+    setErrorMessage('');
 
     try {
       const { error } = await supabase
@@ -851,25 +1063,46 @@ export default function FitnessView() {
         .eq('id', id)
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setRuns((current) =>
+        current.filter((run) => run.id !== id),
+      );
+
+      notifyLifeOSDataChanged();
 
       await loadData();
     } catch (error) {
       console.error('Run delete error:', error);
+
+      setErrorMessage(
+        `Run could not be deleted: ${getErrorMessage(
+          error,
+        )}`,
+      );
     }
   };
 
   const saveWorkout = async () => {
-    if (!user) return;
+    if (!user || saving) return;
 
-    const durationMinutes = Number(workoutForm.duration);
+    setErrorMessage('');
+
+    const durationMinutes = Number(
+      workoutForm.duration,
+    );
 
     if (
       !workoutForm.name.trim() ||
       !workoutForm.date ||
-      !durationMinutes ||
+      !Number.isFinite(durationMinutes) ||
       durationMinutes <= 0
     ) {
+      setErrorMessage(
+        'Please enter a workout name, date and valid duration.',
+      );
       return;
     }
 
@@ -880,40 +1113,85 @@ export default function FitnessView() {
         user_id: user.id,
         name: workoutForm.name.trim(),
         date: workoutForm.date,
-        duration_seconds: Math.round(durationMinutes * 60),
-        notes: workoutForm.notes.trim() || null,
-        updated_at: new Date().toISOString(),
+        duration_seconds: Math.round(
+          durationMinutes * 60,
+        ),
+        notes:
+          workoutForm.notes.trim() || null,
+        updated_at:
+          new Date().toISOString(),
       };
 
       if (editingWorkoutId) {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('workouts')
           .update(payload)
           .eq('id', editingWorkoutId)
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .select(WORKOUT_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setWorkouts((current) =>
+            current.map((workout) =>
+              workout.id === editingWorkoutId
+                ? (data as Workout)
+                : workout,
+            ),
+          );
+        }
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('workouts')
-          .insert(payload);
+          .insert(payload)
+          .select(WORKOUT_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setWorkouts((current) => [
+            data as Workout,
+            ...current,
+          ]);
+        }
       }
 
       setWorkoutModal(false);
       resetWorkoutForm();
 
-      await loadData();
+      notifyLifeOSDataChanged();
+
+      // Reconcile with the database in the background without blocking the UI.
+      void loadData();
     } catch (error) {
-      console.error('Workout save error:', error);
+      console.error(
+        'Workout save error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Workout could not be saved: ${getErrorMessage(
+          error,
+        )}`,
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteWorkout = async (id: string) => {
-    if (!user) return;
+  const deleteWorkout = async (
+    id: string,
+  ) => {
+    if (!user || saving) return;
+
+    setErrorMessage('');
 
     try {
       const { error } = await supabase
@@ -922,18 +1200,70 @@ export default function FitnessView() {
         .eq('id', id)
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setWorkouts((current) =>
+        current.filter(
+          (workout) => workout.id !== id,
+        ),
+      );
+
+      notifyLifeOSDataChanged();
 
       await loadData();
     } catch (error) {
-      console.error('Workout delete error:', error);
+      console.error(
+        'Workout delete error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Workout could not be deleted: ${getErrorMessage(
+          error,
+        )}`,
+      );
     }
   };
 
   const saveMeal = async () => {
-    if (!user) return;
+    if (!user || saving) return;
 
-    if (!mealForm.name.trim() || !mealForm.date) {
+    setErrorMessage('');
+
+    if (
+      !mealForm.name.trim() ||
+      !mealForm.date
+    ) {
+      setErrorMessage(
+        'Please enter a meal name and date.',
+      );
+      return;
+    }
+
+    const calories = Number(
+      mealForm.calories,
+    );
+    const protein = Number(
+      mealForm.protein,
+    );
+    const carbs = Number(
+      mealForm.carbs,
+    );
+    const fat = Number(
+      mealForm.fat,
+    );
+
+    if (
+      calories < 0 ||
+      protein < 0 ||
+      carbs < 0 ||
+      fat < 0
+    ) {
+      setErrorMessage(
+        'Nutrition values cannot be negative.',
+      );
       return;
     }
 
@@ -944,43 +1274,92 @@ export default function FitnessView() {
         user_id: user.id,
         meal_type: mealForm.mealType,
         name: mealForm.name.trim(),
-        calories: Number(mealForm.calories) || 0,
-        protein: Number(mealForm.protein) || 0,
-        carbs: Number(mealForm.carbs) || 0,
-        fat: Number(mealForm.fat) || 0,
+        calories:
+          Number.isFinite(calories)
+            ? calories
+            : 0,
+        protein:
+          Number.isFinite(protein)
+            ? protein
+            : 0,
+        carbs:
+          Number.isFinite(carbs)
+            ? carbs
+            : 0,
+        fat:
+          Number.isFinite(fat)
+            ? fat
+            : 0,
         date: mealForm.date,
-        updated_at: new Date().toISOString(),
+        updated_at:
+          new Date().toISOString(),
       };
 
       if (editingMealId) {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('meals')
           .update(payload)
           .eq('id', editingMealId)
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .select(MEAL_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setMeals((current) =>
+            current.map((meal) =>
+              meal.id === editingMealId ? (data as Meal) : meal,
+            ),
+          );
+        }
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('meals')
-          .insert(payload);
+          .insert(payload)
+          .select(MEAL_SELECT)
+          .single();
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setMeals((current) => [data as Meal, ...current]);
+        }
       }
 
       setMealModal(false);
       resetMealForm();
 
-      await loadData();
+      notifyLifeOSDataChanged();
+
+      // Reconcile with the database in the background without blocking the UI.
+      void loadData();
     } catch (error) {
-      console.error('Meal save error:', error);
+      console.error(
+        'Meal save error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Meal could not be saved: ${getErrorMessage(
+          error,
+        )}`,
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteMeal = async (id: string) => {
-    if (!user) return;
+  const deleteMeal = async (
+    id: string,
+  ) => {
+    if (!user || saving) return;
+
+    setErrorMessage('');
 
     try {
       const { error } = await supabase
@@ -989,20 +1368,50 @@ export default function FitnessView() {
         .eq('id', id)
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setMeals((current) =>
+        current.filter(
+          (meal) => meal.id !== id,
+        ),
+      );
+
+      notifyLifeOSDataChanged();
 
       await loadData();
     } catch (error) {
-      console.error('Meal delete error:', error);
+      console.error(
+        'Meal delete error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Meal could not be deleted: ${getErrorMessage(
+          error,
+        )}`,
+      );
     }
   };
 
   const saveWater = async () => {
-    if (!user) return;
+    if (!user || saving) return;
 
-    const amount = Number(waterForm.amount);
+    setErrorMessage('');
 
-    if (!amount || amount <= 0 || !waterForm.date) {
+    const amount = Number(
+      waterForm.amount,
+    );
+
+    if (
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !waterForm.date
+    ) {
+      setErrorMessage(
+        'Please enter a valid water amount and date.',
+      );
       return;
     }
 
@@ -1017,21 +1426,38 @@ export default function FitnessView() {
           date: waterForm.date,
         });
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      notifyLifeOSDataChanged();
+
+      await loadData();
 
       setWaterModal(false);
       resetWaterForm();
-
-      await loadData();
     } catch (error) {
-      console.error('Water save error:', error);
+      console.error(
+        'Water save error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Water could not be saved: ${getErrorMessage(
+          error,
+        )}`,
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteWater = async (id: string) => {
-    if (!user) return;
+  const deleteWater = async (
+    id: string,
+  ) => {
+    if (!user || saving) return;
+
+    setErrorMessage('');
 
     try {
       const { error } = await supabase
@@ -1040,11 +1466,30 @@ export default function FitnessView() {
         .eq('id', id)
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setWaterLogs((current) =>
+        current.filter(
+          (log) => log.id !== id,
+        ),
+      );
+
+      notifyLifeOSDataChanged();
 
       await loadData();
     } catch (error) {
-      console.error('Water delete error:', error);
+      console.error(
+        'Water delete error:',
+        error,
+      );
+
+      setErrorMessage(
+        `Water could not be deleted: ${getErrorMessage(
+          error,
+        )}`,
+      );
     }
   };
 
@@ -1119,7 +1564,9 @@ export default function FitnessView() {
 
             <button
               type="button"
-              onClick={() => setSelectedDate(getLocalDate())}
+              onClick={() =>
+                setSelectedDate(getLocalDate())
+              }
               className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               <Calendar size={16} />
@@ -1127,11 +1574,15 @@ export default function FitnessView() {
               <span className="hidden sm:inline">
                 {selectedDate === getLocalDate()
                   ? 'Today'
-                  : formatShortDate(selectedDate)}
+                  : formatShortDate(
+                      selectedDate,
+                    )}
               </span>
 
               <span className="sm:hidden">
-                {selectedDate === getLocalDate() ? 'Today' : 'Day'}
+                {selectedDate === getLocalDate()
+                  ? 'Today'
+                  : 'Day'}
               </span>
             </button>
 
@@ -1159,17 +1610,25 @@ export default function FitnessView() {
           )}
         </div>
 
+        <ErrorBanner
+          message={errorMessage}
+          onClose={() => setErrorMessage('')}
+        />
+
         {/* TABS */}
         <div className="mb-6 w-full overflow-x-auto">
           <div className="flex min-w-max gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             {tabs.map((tab) => {
-              const active = activeTab === tab.id;
+              const active =
+                activeTab === tab.id;
 
               return (
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() =>
+                    setActiveTab(tab.id)
+                  }
                   className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                     active
                       ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
@@ -1187,7 +1646,10 @@ export default function FitnessView() {
         {loading ? (
           <div className="flex min-h-[400px] items-center justify-center">
             <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-              <Loader2 className="animate-spin" size={18} />
+              <Loader2
+                className="animate-spin"
+                size={18}
+              />
               Loading activity...
             </div>
           </div>
@@ -1199,9 +1661,14 @@ export default function FitnessView() {
 
                 <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">
                   <StatCard
-                    icon={<Footprints size={18} />}
+                    icon={
+                      <Footprints size={18} />
+                    }
                     label="Distance"
-                    value={`${formatNumber(todayDistance, 2)} km`}
+                    value={`${formatNumber(
+                      todayDistance,
+                      2,
+                    )} km`}
                     subtext={`Target ${formatNumber(
                       profile.daily_run_target,
                       1,
@@ -1211,23 +1678,31 @@ export default function FitnessView() {
                   <StatCard
                     icon={<Clock3 size={18} />}
                     label="Duration"
-                    value={formatDuration(todayRunDuration)}
+                    value={formatDuration(
+                      todayRunDuration,
+                    )}
                     subtext={`${selectedRuns.length} run${
-                      selectedRuns.length === 1 ? '' : 's'
+                      selectedRuns.length === 1
+                        ? ''
+                        : 's'
                     }`}
                   />
 
                   <StatCard
                     icon={<Zap size={18} />}
                     label="Pace"
-                    value={formatPace(averagePace)}
+                    value={formatPace(
+                      averagePace,
+                    )}
                     subtext="Average pace"
                   />
 
                   <StatCard
                     icon={<Flame size={18} />}
                     label="Calories"
-                    value={`${formatNumber(todayRunCalories)} kcal`}
+                    value={`${formatNumber(
+                      todayRunCalories,
+                    )} kcal`}
                     subtext="Running calories"
                   />
                 </div>
@@ -1240,8 +1715,16 @@ export default function FitnessView() {
                       </p>
 
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                        {formatNumber(todayDistance, 2)} /{' '}
-                        {formatNumber(profile.daily_run_target, 1)} km
+                        {formatNumber(
+                          todayDistance,
+                          2,
+                        )}{' '}
+                        /{' '}
+                        {formatNumber(
+                          profile.daily_run_target,
+                          1,
+                        )}{' '}
+                        km
                       </p>
                     </div>
 
@@ -1258,37 +1741,51 @@ export default function FitnessView() {
 
                   <ProgressBar
                     value={todayDistance}
-                    target={profile.daily_run_target}
+                    target={
+                      profile.daily_run_target
+                    }
                   />
                 </div>
 
                 <section>
                   <SectionHeader
-                    icon={<Footprints size={19} />}
+                    icon={
+                      <Footprints size={19} />
+                    }
                     title="Runs"
                     description="Your running history"
                     action={
                       <button
                         type="button"
-                        onClick={() => openRunModal()}
+                        onClick={() =>
+                          openRunModal()
+                        }
                         className="flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
                       >
                         <Plus size={16} />
-                        <span className="hidden sm:inline">Log run</span>
-                        <span className="sm:hidden">Add</span>
+                        <span className="hidden sm:inline">
+                          Log run
+                        </span>
+                        <span className="sm:hidden">
+                          Add
+                        </span>
                       </button>
                     }
                   />
 
                   {selectedRuns.length === 0 ? (
                     <EmptyState
-                      icon={<Footprints size={21} />}
+                      icon={
+                        <Footprints size={21} />
+                      }
                       title="No run logged"
                       description="Log your run for this day to keep your activity history updated."
                       action={
                         <button
                           type="button"
-                          onClick={() => openRunModal()}
+                          onClick={() =>
+                            openRunModal()
+                          }
                           className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
                         >
                           Log your first run
@@ -1297,76 +1794,112 @@ export default function FitnessView() {
                     />
                   ) : (
                     <div className="space-y-3">
-                      {selectedRuns.map((run) => (
-                        <div
-                          key={run.id}
-                          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300">
-                                  <Footprints size={17} />
+                      {selectedRuns.map(
+                        (run) => (
+                          <div
+                            key={run.id}
+                            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300">
+                                    <Footprints
+                                      size={17}
+                                    />
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-slate-900 dark:text-white">
+                                      {formatNumber(
+                                        run.distance_km,
+                                        2,
+                                      )}{' '}
+                                      km
+                                    </p>
+
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                      {formatDuration(
+                                        run.duration_seconds,
+                                      )}{' '}
+                                      ·{' '}
+                                      {formatPace(
+                                        run.pace,
+                                      )}
+                                    </p>
+                                  </div>
                                 </div>
 
-                                <div className="min-w-0">
-                                  <p className="font-bold text-slate-900 dark:text-white">
-                                    {formatNumber(
-                                      run.distance_km,
-                                      2,
-                                    )}{' '}
-                                    km
-                                  </p>
+                                {(run.notes ||
+                                  run.route_location) && (
+                                  <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                                    {run.route_location && (
+                                      <p>
+                                        📍{' '}
+                                        {
+                                          run.route_location
+                                        }
+                                      </p>
+                                    )}
 
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {formatDuration(
-                                      run.duration_seconds,
-                                    )}{' '}
-                                    · {formatPace(run.pace)}
-                                  </p>
-                                </div>
+                                    {run.notes && (
+                                      <p>
+                                        {
+                                          run.notes
+                                        }
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
-                              {(run.notes || run.route_location) && (
-                                <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                                  {run.route_location && (
-                                    <p>📍 {run.route_location}</p>
-                                  )}
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openRunModal(
+                                      run,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+                                  aria-label="Edit run"
+                                >
+                                  <MoreHorizontal
+                                    size={17}
+                                  />
+                                </button>
 
-                                  {run.notes && <p>{run.notes}</p>}
-                                </div>
-                              )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteRun(
+                                      run.id,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                                  aria-label="Delete run"
+                                >
+                                  <Trash2
+                                    size={16}
+                                  />
+                                </button>
+                              </div>
                             </div>
 
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => openRunModal(run)}
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
-                                aria-label="Edit run"
-                              >
-                                <MoreHorizontal size={17} />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => void deleteRun(run.id)}
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                                aria-label="Delete run"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
+                            {run.calories && (
+                              <div className="mt-4 flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <Flame
+                                  size={14}
+                                />
+                                {formatNumber(
+                                  run.calories,
+                                )}{' '}
+                                kcal
+                              </div>
+                            )}
                           </div>
-
-                          {run.calories && (
-                            <div className="mt-4 flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                              <Flame size={14} />
-                              {formatNumber(run.calories)} kcal
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        ),
+                      )}
                     </div>
                   )}
                 </section>
@@ -1378,26 +1911,37 @@ export default function FitnessView() {
               <div className="space-y-6">
                 <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-3">
                   <StatCard
-                    icon={<Dumbbell size={18} />}
+                    icon={
+                      <Dumbbell size={18} />
+                    }
                     label="Sessions"
-                    value={formatNumber(selectedWorkouts.length)}
+                    value={formatNumber(
+                      selectedWorkouts.length,
+                    )}
                     subtext="Logged today"
                   />
 
                   <StatCard
                     icon={<Clock3 size={18} />}
                     label="Duration"
-                    value={formatDuration(todayWorkoutDuration)}
+                    value={formatDuration(
+                      todayWorkoutDuration,
+                    )}
                     subtext={`${formatMinutes(
                       todayWorkoutDuration,
                     )} minutes`}
                   />
 
                   <StatCard
-                    icon={<Activity size={18} />}
+                    icon={
+                      <Activity size={18} />
+                    }
                     label="Status"
                     value={
-                      selectedWorkouts.length > 0 ? 'Active' : 'Rest'
+                      selectedWorkouts.length >
+                      0
+                        ? 'Active'
+                        : 'Rest'
                     }
                     subtext="Based on logged sessions"
                   />
@@ -1405,33 +1949,44 @@ export default function FitnessView() {
 
                 <section>
                   <SectionHeader
-                    icon={<Dumbbell size={19} />}
+                    icon={
+                      <Dumbbell size={19} />
+                    }
                     title="Workout sessions"
                     description="Track your training sessions"
                     action={
                       <button
                         type="button"
-                        onClick={() => openWorkoutModal()}
+                        onClick={() =>
+                          openWorkoutModal()
+                        }
                         className="flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
                       >
                         <Plus size={16} />
                         <span className="hidden sm:inline">
                           Log workout
                         </span>
-                        <span className="sm:hidden">Add</span>
+                        <span className="sm:hidden">
+                          Add
+                        </span>
                       </button>
                     }
                   />
 
-                  {selectedWorkouts.length === 0 ? (
+                  {selectedWorkouts.length ===
+                  0 ? (
                     <EmptyState
-                      icon={<Dumbbell size={21} />}
+                      icon={
+                        <Dumbbell size={21} />
+                      }
                       title="No workout logged"
                       description="Add a workout session to build your training history."
                       action={
                         <button
                           type="button"
-                          onClick={() => openWorkoutModal()}
+                          onClick={() =>
+                            openWorkoutModal()
+                          }
                           className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
                         >
                           Log workout
@@ -1440,62 +1995,78 @@ export default function FitnessView() {
                     />
                   ) : (
                     <div className="space-y-3">
-                      {selectedWorkouts.map((workout) => (
-                        <div
-                          key={workout.id}
-                          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300">
-                                <Dumbbell size={18} />
-                              </div>
+                      {selectedWorkouts.map(
+                        (workout) => (
+                          <div
+                            key={workout.id}
+                            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex min-w-0 items-start gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300">
+                                  <Dumbbell
+                                    size={18}
+                                  />
+                                </div>
 
-                              <div className="min-w-0">
-                                <h3 className="truncate font-bold text-slate-900 dark:text-white">
-                                  {workout.name}
-                                </h3>
+                                <div className="min-w-0">
+                                  <h3 className="truncate font-bold text-slate-900 dark:text-white">
+                                    {
+                                      workout.name
+                                    }
+                                  </h3>
 
-                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                  {formatDuration(
-                                    workout.duration_seconds,
-                                  )}
-                                </p>
-
-                                {workout.notes && (
-                                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                    {workout.notes}
+                                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    {formatDuration(
+                                      workout.duration_seconds,
+                                    )}
                                   </p>
-                                )}
+
+                                  {workout.notes && (
+                                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                      {
+                                        workout.notes
+                                      }
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openWorkoutModal(workout)
-                                }
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                aria-label="Edit workout"
-                              >
-                                <MoreHorizontal size={17} />
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openWorkoutModal(
+                                      workout,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  aria-label="Edit workout"
+                                >
+                                  <MoreHorizontal
+                                    size={17}
+                                  />
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void deleteWorkout(workout.id)
-                                }
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                                aria-label="Delete workout"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteWorkout(
+                                      workout.id,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                                  aria-label="Delete workout"
+                                >
+                                  <Trash2
+                                    size={16}
+                                  />
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ),
+                      )}
                     </div>
                   )}
                 </section>
@@ -1509,7 +2080,9 @@ export default function FitnessView() {
                   <StatCard
                     icon={<Flame size={18} />}
                     label="Calories"
-                    value={`${formatNumber(todayCalories)} kcal`}
+                    value={`${formatNumber(
+                      todayCalories,
+                    )} kcal`}
                     subtext={`Target ${formatNumber(
                       profile.daily_calorie_target,
                     )}`}
@@ -1518,7 +2091,10 @@ export default function FitnessView() {
                   <StatCard
                     icon={<Beef size={18} />}
                     label="Protein"
-                    value={`${formatNumber(todayProtein, 1)} g`}
+                    value={`${formatNumber(
+                      todayProtein,
+                      1,
+                    )} g`}
                     subtext={`Target ${formatNumber(
                       profile.daily_protein_target,
                     )} g`}
@@ -1527,14 +2103,20 @@ export default function FitnessView() {
                   <StatCard
                     icon={<Zap size={18} />}
                     label="Carbs"
-                    value={`${formatNumber(todayCarbs, 1)} g`}
+                    value={`${formatNumber(
+                      todayCarbs,
+                      1,
+                    )} g`}
                     subtext="Total carbs"
                   />
 
                   <StatCard
                     icon={<Apple size={18} />}
                     label="Fat"
-                    value={`${formatNumber(todayFat, 1)} g`}
+                    value={`${formatNumber(
+                      todayFat,
+                      1,
+                    )} g`}
                     subtext="Total fat"
                   />
                 </div>
@@ -1548,7 +2130,10 @@ export default function FitnessView() {
                         </p>
 
                         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          {formatNumber(todayCalories)} /{' '}
+                          {formatNumber(
+                            todayCalories,
+                          )}{' '}
+                          /{' '}
                           {formatNumber(
                             profile.daily_calorie_target,
                           )}{' '}
@@ -1569,7 +2154,9 @@ export default function FitnessView() {
 
                     <ProgressBar
                       value={todayCalories}
-                      target={profile.daily_calorie_target}
+                      target={
+                        profile.daily_calorie_target
+                      }
                     />
                   </div>
 
@@ -1581,7 +2168,11 @@ export default function FitnessView() {
                         </p>
 
                         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          {formatNumber(todayProtein, 1)} /{' '}
+                          {formatNumber(
+                            todayProtein,
+                            1,
+                          )}{' '}
+                          /{' '}
                           {formatNumber(
                             profile.daily_protein_target,
                           )}{' '}
@@ -1602,40 +2193,53 @@ export default function FitnessView() {
 
                     <ProgressBar
                       value={todayProtein}
-                      target={profile.daily_protein_target}
+                      target={
+                        profile.daily_protein_target
+                      }
                     />
                   </div>
                 </div>
 
                 <section>
                   <SectionHeader
-                    icon={<Utensils size={19} />}
+                    icon={
+                      <Utensils size={19} />
+                    }
                     title="Meals"
                     description="Track your daily nutrition"
                     action={
                       <button
                         type="button"
-                        onClick={() => openMealModal()}
+                        onClick={() =>
+                          openMealModal()
+                        }
                         className="flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2.5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
                       >
                         <Plus size={16} />
                         <span className="hidden sm:inline">
                           Add meal
                         </span>
-                        <span className="sm:hidden">Add</span>
+                        <span className="sm:hidden">
+                          Add
+                        </span>
                       </button>
                     }
                   />
 
-                  {selectedMeals.length === 0 ? (
+                  {selectedMeals.length ===
+                  0 ? (
                     <EmptyState
-                      icon={<Apple size={21} />}
+                      icon={
+                        <Apple size={21} />
+                      }
                       title="No meals logged"
                       description="Add your meals to keep calories and macros up to date."
                       action={
                         <button
                           type="button"
-                          onClick={() => openMealModal()}
+                          onClick={() =>
+                            openMealModal()
+                          }
                           className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
                         >
                           Add meal
@@ -1644,74 +2248,108 @@ export default function FitnessView() {
                     />
                   ) : (
                     <div className="space-y-3">
-                      {selectedMeals.map((meal) => (
-                        <div
-                          key={meal.id}
-                          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-100 text-green-600 dark:bg-green-950/40 dark:text-green-300">
-                                <Apple size={18} />
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="font-bold text-slate-900 dark:text-white">
-                                    {meal.name}
-                                  </h3>
-
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                                    {meal.meal_type}
-                                  </span>
+                      {selectedMeals.map(
+                        (meal) => (
+                          <div
+                            key={meal.id}
+                            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex min-w-0 items-start gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-100 text-green-600 dark:bg-green-950/40 dark:text-green-300">
+                                  <Apple
+                                    size={18}
+                                  />
                                 </div>
 
-                                <p className="mt-1 text-sm font-semibold text-slate-700 dark:text-slate-200">
-                                  {formatNumber(meal.calories)} kcal
-                                </p>
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <h3 className="font-bold text-slate-900 dark:text-white">
+                                      {
+                                        meal.name
+                                      }
+                                    </h3>
 
-                                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-                                  <span>
-                                    Protein{' '}
-                                    {formatNumber(meal.protein, 1)}g
-                                  </span>
+                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                      {
+                                        meal.meal_type
+                                      }
+                                    </span>
+                                  </div>
 
-                                  <span>
-                                    Carbs{' '}
-                                    {formatNumber(meal.carbs, 1)}g
-                                  </span>
+                                  <p className="mt-1 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                    {formatNumber(
+                                      meal.calories,
+                                    )}{' '}
+                                    kcal
+                                  </p>
 
-                                  <span>
-                                    Fat {formatNumber(meal.fat, 1)}g
-                                  </span>
+                                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                                    <span>
+                                      Protein{' '}
+                                      {formatNumber(
+                                        meal.protein,
+                                        1,
+                                      )}
+                                      g
+                                    </span>
+
+                                    <span>
+                                      Carbs{' '}
+                                      {formatNumber(
+                                        meal.carbs,
+                                        1,
+                                      )}
+                                      g
+                                    </span>
+
+                                    <span>
+                                      Fat{' '}
+                                      {formatNumber(
+                                        meal.fat,
+                                        1,
+                                      )}
+                                      g
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
 
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => openMealModal(meal)}
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                aria-label="Edit meal"
-                              >
-                                <MoreHorizontal size={17} />
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openMealModal(
+                                      meal,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  aria-label="Edit meal"
+                                >
+                                  <MoreHorizontal
+                                    size={17}
+                                  />
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void deleteMeal(meal.id)
-                                }
-                                className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                                aria-label="Delete meal"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteMeal(
+                                      meal.id,
+                                    )
+                                  }
+                                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                                  aria-label="Delete meal"
+                                >
+                                  <Trash2
+                                    size={16}
+                                  />
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ),
+                      )}
                     </div>
                   )}
                 </section>
@@ -1730,13 +2368,16 @@ export default function FitnessView() {
                       2,
                     )} L`}
                     subtext={`Target ${formatNumber(
-                      profile.daily_water_target / 1000,
+                      profile.daily_water_target /
+                        1000,
                       1,
                     )} L`}
                   />
 
                   <StatCard
-                    icon={<Activity size={18} />}
+                    icon={
+                      <Activity size={18} />
+                    }
                     label="Progress"
                     value={`${Math.round(
                       getPercent(
@@ -1748,9 +2389,13 @@ export default function FitnessView() {
                   />
 
                   <StatCard
-                    icon={<Utensils size={18} />}
+                    icon={
+                      <Utensils size={18} />
+                    }
                     label="Logs"
-                    value={formatNumber(selectedWaterLogs.length)}
+                    value={formatNumber(
+                      selectedWaterLogs.length,
+                    )}
                     subtext="Water entries"
                   />
                 </div>
@@ -1763,8 +2408,14 @@ export default function FitnessView() {
                       </p>
 
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                        {formatNumber(todayWater)} /{' '}
-                        {formatNumber(profile.daily_water_target)} ml
+                        {formatNumber(
+                          todayWater,
+                        )}{' '}
+                        /{' '}
+                        {formatNumber(
+                          profile.daily_water_target,
+                        )}{' '}
+                        ml
                       </p>
                     </div>
 
@@ -1781,7 +2432,9 @@ export default function FitnessView() {
 
                   <ProgressBar
                     value={todayWater}
-                    target={profile.daily_water_target}
+                    target={
+                      profile.daily_water_target
+                    }
                   />
                 </div>
 
@@ -1803,12 +2456,15 @@ export default function FitnessView() {
                         <span className="hidden sm:inline">
                           Add water
                         </span>
-                        <span className="sm:hidden">Add</span>
+                        <span className="sm:hidden">
+                          Add
+                        </span>
                       </button>
                     }
                   />
 
-                  {selectedWaterLogs.length === 0 ? (
+                  {selectedWaterLogs.length ===
+                  0 ? (
                     <EmptyState
                       icon={<Waves size={21} />}
                       title="No water logged"
@@ -1828,42 +2484,59 @@ export default function FitnessView() {
                     />
                   ) : (
                     <div className="space-y-3">
-                      {selectedWaterLogs.map((log) => (
-                        <div
-                          key={log.id}
-                          className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                        >
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-100 text-cyan-600 dark:bg-cyan-950/40 dark:text-cyan-300">
-                              <Waves size={18} />
-                            </div>
-
-                            <div>
-                              <p className="font-bold text-slate-900 dark:text-white">
-                                {formatNumber(log.amount_ml)} ml
-                              </p>
-
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {new Date(
-                                  log.created_at,
-                                ).toLocaleTimeString('en-IN', {
-                                  hour: 'numeric',
-                                  minute: '2-digit',
-                                })}
-                              </p>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => void deleteWater(log.id)}
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                            aria-label="Delete water log"
+                      {selectedWaterLogs.map(
+                        (log) => (
+                          <div
+                            key={log.id}
+                            className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
                           >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      ))}
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-100 text-cyan-600 dark:bg-cyan-950/40 dark:text-cyan-300">
+                                <Waves
+                                  size={18}
+                                />
+                              </div>
+
+                              <div>
+                                <p className="font-bold text-slate-900 dark:text-white">
+                                  {formatNumber(
+                                    log.amount_ml,
+                                  )}{' '}
+                                  ml
+                                </p>
+
+                                <p className="text-xs text-slate-500 dark:text-slate-400">
+                                  {new Date(
+                                    log.created_at,
+                                  ).toLocaleTimeString(
+                                    'en-IN',
+                                    {
+                                      hour: 'numeric',
+                                      minute:
+                                        '2-digit',
+                                    },
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void deleteWater(
+                                  log.id,
+                                )
+                              }
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                              aria-label="Delete water log"
+                            >
+                              <Trash2
+                                size={16}
+                              />
+                            </button>
+                          </div>
+                        ),
+                      )}
                     </div>
                   )}
                 </section>
@@ -1876,7 +2549,11 @@ export default function FitnessView() {
       {/* RUN MODAL */}
       <Modal
         open={runModal}
-        title={editingRunId ? 'Edit run' : 'Log a run'}
+        title={
+          editingRunId
+            ? 'Edit run'
+            : 'Log a run'
+        }
         onClose={() => {
           setRunModal(false);
           resetRunForm();
@@ -1973,22 +2650,27 @@ export default function FitnessView() {
             />
           </label>
 
-          {runForm.distance && runForm.duration && (
-            <div className="rounded-xl bg-slate-50 p-3 text-sm dark:bg-slate-900">
-              <span className="text-slate-500 dark:text-slate-400">
-                Calculated pace:{' '}
-              </span>
+          {runForm.distance &&
+            runForm.duration && (
+              <div className="rounded-xl bg-slate-50 p-3 text-sm dark:bg-slate-900">
+                <span className="text-slate-500 dark:text-slate-400">
+                  Calculated pace:{' '}
+                </span>
 
-              <span className="font-bold text-slate-900 dark:text-white">
-                {formatPace(
-                  calculatePace(
-                    Number(runForm.distance),
-                    Number(runForm.duration) * 60,
-                  ),
-                )}
-              </span>
-            </div>
-          )}
+                <span className="font-bold text-slate-900 dark:text-white">
+                  {formatPace(
+                    calculatePace(
+                      Number(
+                        runForm.distance,
+                      ),
+                      Number(
+                        runForm.duration,
+                      ) * 60,
+                    ),
+                  )}
+                </span>
+              </div>
+            )}
 
           <button
             type="button"
@@ -2002,12 +2684,17 @@ export default function FitnessView() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
           >
             {saving ? (
-              <Loader2 className="animate-spin" size={17} />
+              <Loader2
+                className="animate-spin"
+                size={17}
+              />
             ) : (
               <Save size={17} />
             )}
 
-            {editingRunId ? 'Update run' : 'Save run'}
+            {editingRunId
+              ? 'Update run'
+              : 'Save run'}
           </button>
         </div>
       </Modal>
@@ -2015,7 +2702,11 @@ export default function FitnessView() {
       {/* WORKOUT MODAL */}
       <Modal
         open={workoutModal}
-        title={editingWorkoutId ? 'Edit workout' : 'Log a workout'}
+        title={
+          editingWorkoutId
+            ? 'Edit workout'
+            : 'Log a workout'
+        }
         onClose={() => {
           setWorkoutModal(false);
           resetWorkoutForm();
@@ -2082,7 +2773,9 @@ export default function FitnessView() {
 
           <button
             type="button"
-            onClick={() => void saveWorkout()}
+            onClick={() =>
+              void saveWorkout()
+            }
             disabled={
               saving ||
               !workoutForm.name.trim() ||
@@ -2092,7 +2785,10 @@ export default function FitnessView() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
           >
             {saving ? (
-              <Loader2 className="animate-spin" size={17} />
+              <Loader2
+                className="animate-spin"
+                size={17}
+              />
             ) : (
               <Save size={17} />
             )}
@@ -2107,7 +2803,11 @@ export default function FitnessView() {
       {/* MEAL MODAL */}
       <Modal
         open={mealModal}
-        title={editingMealId ? 'Edit meal' : 'Add a meal'}
+        title={
+          editingMealId
+            ? 'Edit meal'
+            : 'Add a meal'
+        }
         onClose={() => {
           setMealModal(false);
           resetMealForm();
@@ -2230,12 +2930,17 @@ export default function FitnessView() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
           >
             {saving ? (
-              <Loader2 className="animate-spin" size={17} />
+              <Loader2
+                className="animate-spin"
+                size={17}
+              />
             ) : (
               <Save size={17} />
             )}
 
-            {editingMealId ? 'Update meal' : 'Save meal'}
+            {editingMealId
+              ? 'Update meal'
+              : 'Save meal'}
           </button>
         </div>
       </Modal>
@@ -2278,26 +2983,36 @@ export default function FitnessView() {
           />
 
           <div className="grid grid-cols-4 gap-2">
-            {[250, 500, 750, 1000].map((amount) => (
-              <button
-                key={amount}
-                type="button"
-                onClick={() =>
-                  setWaterForm((current) => ({
-                    ...current,
-                    amount: String(amount),
-                  }))
-                }
-                className="rounded-xl border border-slate-200 px-2 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                {amount >= 1000 ? '1 L' : `${amount} ml`}
-              </button>
-            ))}
+            {[250, 500, 750, 1000].map(
+              (amount) => (
+                <button
+                  key={amount}
+                  type="button"
+                  onClick={() =>
+                    setWaterForm(
+                      (current) => ({
+                        ...current,
+                        amount: String(
+                          amount,
+                        ),
+                      }),
+                    )
+                  }
+                  className="rounded-xl border border-slate-200 px-2 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  {amount >= 1000
+                    ? '1 L'
+                    : `${amount} ml`}
+                </button>
+              ),
+            )}
           </div>
 
           <button
             type="button"
-            onClick={() => void saveWater()}
+            onClick={() =>
+              void saveWater()
+            }
             disabled={
               saving ||
               !waterForm.amount ||
@@ -2306,7 +3021,10 @@ export default function FitnessView() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
           >
             {saving ? (
-              <Loader2 className="animate-spin" size={17} />
+              <Loader2
+                className="animate-spin"
+                size={17}
+              />
             ) : (
               <Check size={17} />
             )}

@@ -375,6 +375,8 @@ function App() {
       EMPTY_DASHBOARD,
     );
 
+    const [dataVersion, setDataVersion] = useState(0);
+
   const [loading, setLoading] =
     useState(true);
 
@@ -1141,22 +1143,18 @@ const historyPopRef = useRef(false);
    * --------------------------------------------------
    */
 
-  const scheduleDashboardRefresh =
-    useCallback(() => {
-      if (
-        realtimeRefreshTimerRef.current
-      ) {
-        clearTimeout(
-          realtimeRefreshTimerRef.current,
-        );
-      }
+  const scheduleDashboardRefresh = useCallback(() => {
+  if (realtimeRefreshTimerRef.current) {
+    clearTimeout(realtimeRefreshTimerRef.current);
+  }
 
-      realtimeRefreshTimerRef.current =
-  setTimeout(() => {
-    void refreshAll(true);
-    realtimeRefreshTimerRef.current = null;
-  }, 500);
-    }, [refreshAll]);
+  realtimeRefreshTimerRef.current =
+    setTimeout(() => {
+      setDataVersion((current) => current + 1);
+      void refreshAll(true);
+      realtimeRefreshTimerRef.current = null;
+    }, 500);
+}, [refreshAll]);
 
   /*
  * --------------------------------------------------
@@ -1587,6 +1585,8 @@ historyIndexRef.current =
 
             realtimeRefreshTimerRef.current =
   setTimeout(() => {
+    setDataVersion((current) => current + 1);
+
     void Promise.all([
       loadProfile(),
       loadDashboard(),
@@ -1594,9 +1594,19 @@ historyIndexRef.current =
 
     realtimeRefreshTimerRef.current = null;
   }, 500);
+
           },
         )
-        .subscribe();
+        .subscribe((status) => {
+          if (
+            status !== 'SUBSCRIBED'
+          ) {
+            console.warn(
+              'LifeOS realtime status:',
+              status,
+            );
+          }
+        });
 
     return () => {
       if (
@@ -1620,6 +1630,39 @@ historyIndexRef.current =
     loadDashboard,
     scheduleDashboardRefresh,
   ]);
+
+  /*
+   * --------------------------------------------------
+   * APP-WIDE DATA SYNC
+   * --------------------------------------------------
+   *
+   * Child views dispatch this event immediately after a
+   * successful database mutation. This keeps Home,
+   * Analytics and Reports in sync in the same browser tab
+   * without waiting for Supabase Realtime delivery.
+   */
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const handleDataChange = () => {
+      setDataVersion((current) => current + 1);
+      void refreshAll(true);
+    };
+
+    window.addEventListener(
+      'lifeos-data-changed',
+      handleDataChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        'lifeos-data-changed',
+        handleDataChange,
+      );
+    };
+  }, [user, refreshAll]);
 
   /*
    * --------------------------------------------------
@@ -2572,10 +2615,10 @@ historyIndexRef.current =
           return <CalendarView />;
 
         case 'analytics':
-          return <AnalyticsView />;
+          return <AnalyticsView refreshVersion={dataVersion} />;
 
         case 'reports':
-          return <ReportsView />;
+          return <ReportsView refreshVersion={dataVersion} />;
 
         case 'settings':
           return <SettingsView />;

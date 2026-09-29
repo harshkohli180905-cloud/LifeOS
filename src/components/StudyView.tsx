@@ -20,8 +20,7 @@ import {
   Pause,
   Play,
   Plus,
-  RefreshCw,
-  RotateCcw,
+  
   Search,
   Square,
   Trash2,
@@ -36,7 +35,7 @@ import type { TopicStatus } from '../types';
 
 type StudyTab =
   | 'overview'
-  | 'revision'
+  
   | 'sessions';
 
 type Subject = {
@@ -60,7 +59,7 @@ type Topic = {
   completed: boolean;
   position: number;
   status: TopicStatus;
-  revisions_completed: number;
+  
   created_at: string;
   updated_at: string;
 };
@@ -303,11 +302,7 @@ function getStatusLabel(
     case 'completed':
       return 'Completed';
 
-    case 'revision_due':
-      return 'Revision due';
-
-    case 'revision_completed':
-      return 'Revision completed';
+    
 
     default:
       return 'Not started';
@@ -324,11 +319,7 @@ function getStatusClass(
     case 'in_progress':
       return 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400';
 
-    case 'revision_due':
-      return 'bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-400';
-
-    case 'revision_completed':
-      return 'bg-purple-50 text-purple-700 dark:bg-purple-950/30 dark:text-purple-400';
+    
 
     default:
       return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
@@ -522,7 +513,7 @@ function StudyView() {
                 completed,
                 position,
                 status,
-                revisions_completed,
+                
                 created_at,
                 updated_at
                 `,
@@ -1318,8 +1309,7 @@ function StudyView() {
               maxPosition + 1,
             status:
               'not_started',
-            revisions_completed:
-              0,
+            
           });
 
         if (error) {
@@ -1530,94 +1520,7 @@ function StudyView() {
       await loadData();
     };
 
-  /*
-   * --------------------------------------------------
-   * REVISION
-   * --------------------------------------------------
-   */
-
-  const markRevisionDue =
-    async (
-      topic: Topic,
-    ) => {
-      if (!user) {
-        return;
-      }
-
-      const {
-        error,
-      } = await supabase
-        .from('topics')
-        .update({
-          status:
-            'revision_due',
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          'id',
-          topic.id,
-        )
-        .eq(
-          'user_id',
-          user.id,
-        );
-
-      if (error) {
-        console.error(
-          'Revision due error:',
-          error,
-        );
-
-        return;
-      }
-
-      await loadData();
-    };
-
-  const completeRevision =
-    async (
-      topic: Topic,
-    ) => {
-      if (!user) {
-        return;
-      }
-
-      const {
-        error,
-      } = await supabase
-        .from('topics')
-        .update({
-          status:
-            'revision_completed',
-          revisions_completed:
-            Number(
-              topic.revisions_completed ??
-                0,
-            ) + 1,
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          'id',
-          topic.id,
-        )
-        .eq(
-          'user_id',
-          user.id,
-        );
-
-      if (error) {
-        console.error(
-          'Revision complete error:',
-          error,
-        );
-
-        return;
-      }
-
-      await loadData();
-    };
+  
 
   /*
    * --------------------------------------------------
@@ -1932,18 +1835,7 @@ function StudyView() {
       selectedSubjectTopics,
     ]);
 
-  const revisionTopics =
-    useMemo(
-      () =>
-        topics.filter(
-          (topic) =>
-            topic.status ===
-              'revision_due' ||
-            topic.status ===
-              'revision_completed',
-        ),
-      [topics],
-    );
+  
 
   const sessionSearch =
     useMemo(() => {
@@ -2035,11 +1927,9 @@ function StudyView() {
             </h1>
 
             <p className="mt-2 text-blue-100 text-sm max-w-xl">
-              Organize subjects,
-              track topics,
-              run focused study
-              sessions and stay
-              on top of revisions.
+             Organize subjects,
+track topics and run
+focused study sessions.
             </p>
           </div>
 
@@ -2170,23 +2060,7 @@ function StudyView() {
           label="Overview"
         />
 
-        <TabButton
-          active={
-            tab ===
-            'revision'
-          }
-          onClick={() =>
-            setTab(
-              'revision',
-            )
-          }
-          icon={
-            <RefreshCw
-              size={16}
-            />
-          }
-          label="Revision"
-        />
+        
 
         <TabButton
           active={
@@ -2251,21 +2125,7 @@ function StudyView() {
               className="text-orange-600 dark:text-orange-400"
             />
 
-            <StatCard
-              icon={
-                <RefreshCw
-                  size={19}
-                />
-              }
-              title="Revision"
-              value={`${revisionTopics.filter(
-                (topic) =>
-                  topic.status ===
-                  'revision_due',
-              ).length}`}
-              subtitle="due"
-              className="text-purple-600 dark:text-purple-400"
-            />
+           
           </div>
 
           {/* SUBJECTS + TOPICS */}
@@ -2614,143 +2474,7 @@ function StudyView() {
         </>
       )}
 
-      {/* REVISION */}
-      {tab ===
-        'revision' && (
-        <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-          <div className="p-5 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="font-bold">
-                  Revision tracker
-                </h2>
-
-                <p className="text-sm text-slate-400 mt-1">
-                  Mark topics for
-                  revision and track
-                  completed revisions.
-                </p>
-              </div>
-
-              <RefreshCw
-                size={20}
-                className="text-purple-500"
-              />
-            </div>
-          </div>
-
-          {revisionTopics.length ===
-          0 ? (
-            <EmptyState
-              icon={
-                <RefreshCw
-                  size={28}
-                />
-              }
-              title="No revision items"
-              text="Mark completed topics for revision when you want to revisit them."
-            />
-          ) : (
-            <div className="p-4 grid md:grid-cols-2 gap-3">
-              {revisionTopics.map(
-                (topic) => (
-                  <div
-                    key={
-                      topic.id
-                    }
-                    className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-xs text-slate-400">
-                          {
-                            getSubjectName(
-                              topic.subject_id,
-                            )
-                          }
-                        </div>
-
-                        <div className="mt-1 font-semibold truncate">
-                          {
-                            topic.name
-                          }
-                        </div>
-
-                        <div className="mt-2 text-xs text-slate-400">
-                          Revisions completed:{' '}
-                          {
-                            topic.revisions_completed
-                          }
-                        </div>
-                      </div>
-
-                      <span
-                        className={`px-2 py-1 rounded-lg text-[11px] font-medium shrink-0 ${getStatusClass(
-                          topic.status,
-                        )}`}
-                      >
-                        {getStatusLabel(
-                          topic.status,
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {topic.status ===
-                      'revision_due' ? (
-                        <button
-                          onClick={() =>
-                            void completeRevision(
-                              topic,
-                            )
-                          }
-                          className="h-9 px-3 rounded-xl bg-purple-600 text-white text-sm font-semibold flex items-center gap-2"
-                        >
-                          <Check
-                            size={15}
-                          />
-                          Mark revised
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() =>
-                            void markRevisionDue(
-                              topic,
-                            )
-                          }
-                          className="h-9 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium flex items-center gap-2"
-                        >
-                          <RotateCcw
-                            size={15}
-                          />
-                          Due again
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => {
-                          setSelectedSubjectId(
-                            topic.subject_id,
-                          );
-                          setSelectedTopicId(
-                            topic.id,
-                          );
-                          setTab(
-                            'overview',
-                          );
-                        }}
-                        className="h-9 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm"
-                      >
-                        Open topic
-                      </button>
-                    </div>
-                  </div>
-                ),
-              )}
-            </div>
-          )}
-        </section>
-      )}
+      
 
       {/* SESSIONS */}
       {tab ===
@@ -3524,15 +3248,7 @@ function TopicTree({
                 )}
               </span>
 
-              {topic.revisions_completed >
-                0 && (
-                <span className="text-[10px] text-slate-400">
-                  {
-                    topic.revisions_completed
-                  }{' '}
-                  revisions
-                </span>
-              )}
+              
             </div>
           </button>
 

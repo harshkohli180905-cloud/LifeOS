@@ -356,7 +356,13 @@ function DarkSummary({
   );
 }
 
-export default function AnalyticsView() {
+type AnalyticsViewProps = {
+  refreshVersion?: number;
+};
+
+export default function AnalyticsView({
+  refreshVersion = 0,
+}: AnalyticsViewProps) {
   const { user } = useAuth();
 
   const today = getLocalDate();
@@ -644,8 +650,8 @@ export default function AnalyticsView() {
   );
 
   useEffect(() => {
-    void loadAnalytics();
-  }, [loadAnalytics]);
+  void loadAnalytics();
+}, [loadAnalytics, refreshVersion]);
 
   const goPrevious = () => {
     setRangeStart(

@@ -16,7 +16,6 @@ import {
   User,
   Utensils,
 } from 'lucide-react';
-
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -91,7 +90,7 @@ function formatNumber(value: number, decimals = 1) {
     return String(value);
   }
 
-  return value.toFixed(decimals).replace(/\.0+$/, '');
+  return value.toFixed(decimals).replace(/\.?0+$/, '');
 }
 
 function getInitials(name: string) {
@@ -122,7 +121,6 @@ export default function OnboardingView({
   );
 
   const [step, setStep] = useState<Step>(1);
-
   const [name, setName] = useState(initialName);
   const [avatar, setAvatar] = useState(initialAvatar ?? '');
 
@@ -224,7 +222,9 @@ export default function OnboardingView({
 
   const handleComplete = async () => {
     if (!user) {
-      setError('Your account session is missing. Please sign in again.');
+      setError(
+        'Your account session is missing. Please sign in again.',
+      );
       return;
     }
 
@@ -291,10 +291,10 @@ export default function OnboardingView({
   return (
     <div
       className="
-        min-h-[100dvh]
+        h-[100dvh]
         w-full
         min-w-0
-        overflow-x-hidden
+        overflow-hidden
         bg-slate-50
         text-slate-900
         dark:bg-slate-950
@@ -304,11 +304,12 @@ export default function OnboardingView({
       <div
         className="
           flex
-          min-h-[100dvh]
+          h-full
+          min-h-0
           w-full
           min-w-0
           flex-col
-          overflow-x-hidden
+          overflow-hidden
         "
       >
         {/* TOP BAR */}
@@ -343,6 +344,7 @@ export default function OnboardingView({
         <main
           className="
             flex
+            h-0
             min-h-0
             flex-1
             w-full
@@ -521,7 +523,6 @@ export default function OnboardingView({
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {/* STUDY */}
                   <TargetCard
                     icon={<BookIcon />}
                     title="Study"
@@ -534,7 +535,6 @@ export default function OnboardingView({
                     }
                   />
 
-                  {/* WATER */}
                   <TargetCard
                     icon={<Droplets size={20} />}
                     title="Water"
@@ -547,7 +547,6 @@ export default function OnboardingView({
                     }
                   />
 
-                  {/* RUNNING */}
                   <TargetCard
                     icon={<Footprints size={20} />}
                     title="Running"
@@ -560,7 +559,6 @@ export default function OnboardingView({
                     }
                   />
 
-                  {/* PROTEIN */}
                   <TargetCard
                     icon={<Utensils size={20} />}
                     title="Protein"
@@ -573,7 +571,6 @@ export default function OnboardingView({
                     }
                   />
 
-                  {/* CALORIES */}
                   <TargetCard
                     icon={<Flame size={20} />}
                     title="Calories"
@@ -586,7 +583,6 @@ export default function OnboardingView({
                     }
                   />
 
-                  {/* WORKOUT INFO */}
                   <div
                     className="
                       rounded-2xl
@@ -699,7 +695,6 @@ export default function OnboardingView({
                 </div>
 
                 <div className="space-y-3">
-                  {/* PROFILE */}
                   <SummaryCard
                     icon={<User size={19} />}
                     title="Profile"
@@ -733,7 +728,6 @@ export default function OnboardingView({
                     </div>
                   </SummaryCard>
 
-                  {/* STUDY */}
                   <SummaryCard
                     icon={<BookIcon />}
                     title="Study"
@@ -744,7 +738,6 @@ export default function OnboardingView({
                     />
                   </SummaryCard>
 
-                  {/* WATER */}
                   <SummaryCard
                     icon={<Droplets size={19} />}
                     title="Water"
@@ -755,7 +748,6 @@ export default function OnboardingView({
                     />
                   </SummaryCard>
 
-                  {/* RUN */}
                   <SummaryCard
                     icon={<Footprints size={19} />}
                     title="Running"
@@ -766,7 +758,6 @@ export default function OnboardingView({
                     />
                   </SummaryCard>
 
-                  {/* PROTEIN */}
                   <SummaryCard
                     icon={<Utensils size={19} />}
                     title="Protein"
@@ -777,7 +768,6 @@ export default function OnboardingView({
                     />
                   </SummaryCard>
 
-                  {/* CALORIES */}
                   <SummaryCard
                     icon={<Flame size={19} />}
                     title="Calories"

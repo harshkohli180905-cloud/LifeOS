@@ -83,8 +83,6 @@ type DayReport = {
   totalTasks: number;
 };
 
-
-
 function parseDate(dateString: string) {
   const [year, month, day] = dateString.split('-').map(Number);
 
@@ -133,15 +131,9 @@ function getPeriodDates(range: Range, offset: number) {
 
   today.setHours(0, 0, 0, 0);
 
-  const periodEnd = addDays(
-    today,
-    offset * range
-  );
+  const periodEnd = addDays(today, offset * range);
 
-  const periodStart = addDays(
-    periodEnd,
-    -(range - 1)
-  );
+  const periodStart = addDays(periodEnd, -(range - 1));
 
   return {
     start: periodStart,
@@ -149,16 +141,19 @@ function getPeriodDates(range: Range, offset: number) {
   };
 }
 
-function ReportsView() {
+type ReportsViewProps = {
+  refreshVersion?: number;
+};
+
+function ReportsView({
+  refreshVersion = 0,
+}: ReportsViewProps) {
   const { user } = useAuth();
 
   const [range, setRange] = useState<Range>(7);
   const [periodOffset, setPeriodOffset] = useState(0);
 
-  const [studySessions, setStudySessions] = useState<
-    StudySession[]
-  >([]);
-
+  const [studySessions, setStudySessions] = useState<StudySession[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [meals, setMeals] = useState<Meal[]>([]);
@@ -173,8 +168,6 @@ function ReportsView() {
     [range, periodOffset]
   );
 
-  
-
   const isCurrentPeriod = periodOffset === 0;
 
   useEffect(() => {
@@ -187,8 +180,16 @@ function ReportsView() {
     const loadReport = async () => {
       if (!user) {
         if (active) {
+          setStudySessions([]);
+          setRuns([]);
+          setWorkouts([]);
+          setMeals([]);
+          setWaterLogs([]);
+          setTasks([]);
+          setGoals([]);
           setLoading(false);
         }
+
         return;
       }
 
@@ -200,11 +201,8 @@ function ReportsView() {
       const periodEnd = new Date(end);
       periodEnd.setHours(23, 59, 59, 999);
 
-      const periodStartString =
-        getLocalDate(periodStart);
-
-      const periodEndString =
-        getLocalDate(periodEnd);
+      const periodStartString = getLocalDate(periodStart);
+      const periodEndString = getLocalDate(periodEnd);
 
       const [
         studyResult,
@@ -217,18 +215,10 @@ function ReportsView() {
       ] = await Promise.all([
         supabase
           .from('study_sessions')
-          .select(
-            'id, started_at, duration_seconds'
-          )
+          .select('id, started_at, duration_seconds')
           .eq('user_id', user.id)
-          .gte(
-            'started_at',
-            periodStart.toISOString()
-          )
-          .lte(
-            'started_at',
-            periodEnd.toISOString()
-          )
+          .gte('started_at', periodStart.toISOString())
+          .lte('started_at', periodEnd.toISOString())
           .order('started_at', {
             ascending: true,
           }),
@@ -247,9 +237,7 @@ function ReportsView() {
 
         supabase
           .from('workouts')
-          .select(
-            'id, date, duration_seconds'
-          )
+          .select('id, date, duration_seconds')
           .eq('user_id', user.id)
           .gte('date', periodStartString)
           .lte('date', periodEndString)
@@ -259,9 +247,7 @@ function ReportsView() {
 
         supabase
           .from('meals')
-          .select(
-            'id, date, calories, protein, carbs, fat'
-          )
+          .select('id, date, calories, protein, carbs, fat')
           .eq('user_id', user.id)
           .gte('date', periodStartString)
           .lte('date', periodEndString)
@@ -271,9 +257,7 @@ function ReportsView() {
 
         supabase
           .from('water_logs')
-          .select(
-            'id, date, amount_ml'
-          )
+          .select('id, date, amount_ml')
           .eq('user_id', user.id)
           .gte('date', periodStartString)
           .lte('date', periodEndString)
@@ -283,18 +267,14 @@ function ReportsView() {
 
         supabase
           .from('tasks')
-          .select(
-            'id, due_date, completed'
-          )
+          .select('id, due_date, completed')
           .eq('user_id', user.id)
           .gte('due_date', periodStartString)
           .lte('due_date', periodEndString),
 
         supabase
           .from('goals')
-          .select(
-            'id, title, progress, target, completed'
-          )
+          .select('id, title, progress, target, completed')
           .eq('user_id', user.id)
           .order('updated_at', {
             ascending: false,
@@ -391,142 +371,103 @@ function ReportsView() {
       active = false;
     };
   }, [
-    user,
-    range,
-    periodOffset,
-    start,
-    end,
-  ]);
+  user,
+  range,
+  periodOffset,
+  start,
+  end,
+  refreshVersion,
+]);
 
   const days = useMemo(() => {
     const result: DayReport[] = [];
 
     for (let i = 0; i < range; i += 1) {
-      const date = addDays(
-        end,
-        -i
+      const date = addDays(end, -i);
+      const dateString = getLocalDate(date);
+
+      const studySeconds = studySessions
+        .filter(
+          (session) =>
+            getLocalDate(
+              new Date(session.started_at)
+            ) === dateString
+        )
+        .reduce(
+          (sum, session) =>
+            sum + Number(session.duration_seconds || 0),
+          0
+        );
+
+      const runDistance = runs
+        .filter(
+          (run) => run.date === dateString
+        )
+        .reduce(
+          (sum, run) =>
+            sum + Number(run.distance_km || 0),
+          0
+        );
+
+      const workoutSeconds = workouts
+        .filter(
+          (workout) =>
+            workout.date === dateString
+        )
+        .reduce(
+          (sum, workout) =>
+            sum +
+            Number(workout.duration_seconds || 0),
+          0
+        );
+
+      const water = waterLogs
+        .filter(
+          (log) => log.date === dateString
+        )
+        .reduce(
+          (sum, log) =>
+            sum + Number(log.amount_ml || 0),
+          0
+        );
+
+      const dayMeals = meals.filter(
+        (meal) => meal.date === dateString
       );
 
-      const dateString =
-        getLocalDate(date);
+      const calories = dayMeals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.calories || 0),
+        0
+      );
 
-      const studySeconds =
-        studySessions
-          .filter(
-            (session) =>
-              getLocalDate(
-                new Date(session.started_at)
-              ) === dateString
-          )
-          .reduce(
-            (sum, session) =>
-              sum +
-              Number(
-                session.duration_seconds || 0
-              ),
-            0
-          );
+      const protein = dayMeals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.protein || 0),
+        0
+      );
 
-      const runDistance =
-        runs
-          .filter(
-            (run) =>
-              run.date === dateString
-          )
-          .reduce(
-            (sum, run) =>
-              sum +
-              Number(
-                run.distance_km || 0
-              ),
-            0
-          );
-
-      const workoutSeconds =
-        workouts
-          .filter(
-            (workout) =>
-              workout.date === dateString
-          )
-          .reduce(
-            (sum, workout) =>
-              sum +
-              Number(
-                workout.duration_seconds || 0
-              ),
-            0
-          );
-
-      const water =
-        waterLogs
-          .filter(
-            (log) =>
-              log.date === dateString
-          )
-          .reduce(
-            (sum, log) =>
-              sum +
-              Number(
-                log.amount_ml || 0
-              ),
-            0
-          );
-
-      const dayMeals =
-        meals.filter(
-          (meal) =>
-            meal.date === dateString
-        );
-
-      const calories =
-        dayMeals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.calories || 0
-            ),
-          0
-        );
-
-      const protein =
-        dayMeals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.protein || 0
-            ),
-          0
-        );
-
-      const dayTasks =
-        tasks.filter(
-          (task) =>
-            task.due_date === dateString
-        );
+      const dayTasks = tasks.filter(
+        (task) =>
+          task.due_date === dateString
+      );
 
       result.push({
         date: dateString,
         label:
           i === 0
             ? 'Today'
-            : formatShortDate(
-                dateString
-              ),
-        studyMinutes:
-          studySeconds / 60,
+            : formatShortDate(dateString),
+        studyMinutes: studySeconds / 60,
         runDistance,
-        workoutMinutes:
-          workoutSeconds / 60,
+        workoutMinutes: workoutSeconds / 60,
         waterMl: water,
         calories,
         protein,
-        completedTasks:
-          dayTasks.filter(
-            (task) =>
-              task.completed
-          ).length,
-        totalTasks:
-          dayTasks.length,
+        completedTasks: dayTasks.filter(
+          (task) => task.completed
+        ).length,
+        totalTasks: dayTasks.length,
       });
     }
 
@@ -544,104 +485,67 @@ function ReportsView() {
 
   const totals = useMemo(() => {
     return {
-      studySeconds:
-        studySessions.reduce(
-          (sum, session) =>
-            sum +
-            Number(
-              session.duration_seconds || 0
-            ),
-          0
-        ),
+      studySeconds: studySessions.reduce(
+        (sum, session) =>
+          sum +
+          Number(session.duration_seconds || 0),
+        0
+      ),
 
-      runDistance:
-        runs.reduce(
-          (sum, run) =>
-            sum +
-            Number(
-              run.distance_km || 0
-            ),
-          0
-        ),
+      runDistance: runs.reduce(
+        (sum, run) =>
+          sum + Number(run.distance_km || 0),
+        0
+      ),
 
-      runCalories:
-        runs.reduce(
-          (sum, run) =>
-            sum +
-            Number(
-              run.calories || 0
-            ),
-          0
-        ),
+      runCalories: runs.reduce(
+        (sum, run) =>
+          sum + Number(run.calories || 0),
+        0
+      ),
 
-      workoutSeconds:
-        workouts.reduce(
-          (sum, workout) =>
-            sum +
-            Number(
-              workout.duration_seconds || 0
-            ),
-          0
-        ),
+      workoutSeconds: workouts.reduce(
+        (sum, workout) =>
+          sum +
+          Number(workout.duration_seconds || 0),
+        0
+      ),
 
-      waterMl:
-        waterLogs.reduce(
-          (sum, log) =>
-            sum +
-            Number(
-              log.amount_ml || 0
-            ),
-          0
-        ),
+      waterMl: waterLogs.reduce(
+        (sum, log) =>
+          sum + Number(log.amount_ml || 0),
+        0
+      ),
 
-      calories:
-        meals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.calories || 0
-            ),
-          0
-        ),
+      calories: meals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.calories || 0),
+        0
+      ),
 
-      protein:
-        meals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.protein || 0
-            ),
-          0
-        ),
+      protein: meals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.protein || 0),
+        0
+      ),
 
-      carbs:
-        meals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.carbs || 0
-            ),
-          0
-        ),
+      carbs: meals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.carbs || 0),
+        0
+      ),
 
-      fat:
-        meals.reduce(
-          (sum, meal) =>
-            sum +
-            Number(
-              meal.fat || 0
-            ),
-          0
-        ),
+      fat: meals.reduce(
+        (sum, meal) =>
+          sum + Number(meal.fat || 0),
+        0
+      ),
 
-      completedTasks:
-        tasks.filter(
-          (task) =>
-            task.completed
-        ).length,
+      completedTasks: tasks.filter(
+        (task) => task.completed
+      ).length,
 
-      totalTasks:
-        tasks.length,
+      totalTasks: tasks.length,
     };
   }, [
     studySessions,
@@ -668,12 +572,8 @@ function ReportsView() {
           (goals.filter(
             (goal) =>
               goal.completed ||
-              Number(
-                goal.progress || 0
-              ) >=
-                Number(
-                  goal.target || 1
-                )
+              Number(goal.progress || 0) >=
+                Number(goal.target || 1)
           ).length /
             goals.length) *
             100
@@ -689,40 +589,33 @@ function ReportsView() {
       day.totalTasks > 0
   ).length;
 
-  const bestStudyDay =
-    [...days].sort(
-      (a, b) =>
-        b.studyMinutes -
-        a.studyMinutes
-    )[0];
+  const bestStudyDay = [...days].sort(
+    (a, b) =>
+      b.studyMinutes - a.studyMinutes
+  )[0];
 
-  const bestRunDay =
-    [...days].sort(
-      (a, b) =>
-        b.runDistance -
-        a.runDistance
-    )[0];
+  const bestRunDay = [...days].sort(
+    (a, b) =>
+      b.runDistance - a.runDistance
+  )[0];
 
   const maxStudy = Math.max(
     ...days.map(
-      (day) =>
-        day.studyMinutes
+      (day) => day.studyMinutes
     ),
     1
   );
 
   const maxRun = Math.max(
     ...days.map(
-      (day) =>
-        day.runDistance
+      (day) => day.runDistance
     ),
     1
   );
 
   const maxTasks = Math.max(
     ...days.map(
-      (day) =>
-        day.totalTasks
+      (day) => day.totalTasks
     ),
     1
   );
@@ -752,8 +645,7 @@ function ReportsView() {
 
   const handlePrevious = () => {
     setPeriodOffset(
-      (current) =>
-        current - 1
+      (current) => current - 1
     );
   };
 
@@ -763,8 +655,7 @@ function ReportsView() {
     }
 
     setPeriodOffset(
-      (current) =>
-        current + 1
+      (current) => current + 1
     );
   };
 
@@ -820,9 +711,7 @@ function ReportsView() {
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 dark:border-white/10 dark:bg-white/[0.03] dark:text-gray-200 dark:hover:bg-white/[0.06]"
                   aria-label="Previous period"
                 >
-                  <ChevronLeft
-                    size={18}
-                  />
+                  <ChevronLeft size={18} />
                 </button>
 
                 <div className="min-w-0 flex-1 text-center">
@@ -840,9 +729,7 @@ function ReportsView() {
                 <button
                   type="button"
                   onClick={handleNext}
-                  disabled={
-                    isCurrentPeriod
-                  }
+                  disabled={isCurrentPeriod}
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition ${
                     isCurrentPeriod
                       ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-300 dark:border-white/5 dark:bg-white/[0.02] dark:text-white/20'
@@ -850,9 +737,7 @@ function ReportsView() {
                   }`}
                   aria-label="Next period"
                 >
-                  <ChevronRight
-                    size={18}
-                  />
+                  <ChevronRight size={18} />
                 </button>
               </div>
 
@@ -863,9 +748,7 @@ function ReportsView() {
                       key={value}
                       type="button"
                       onClick={() =>
-                        handleRangeChange(
-                          value
-                        )
+                        handleRangeChange(value)
                       }
                       className={`min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition ${
                         range === value
@@ -910,10 +793,7 @@ function ReportsView() {
             </p>
 
             <p className="mt-1 truncate text-xl font-bold text-gray-900 dark:text-white md:text-2xl">
-              {totals.runDistance.toFixed(
-                1
-              )}{' '}
-              km
+              {totals.runDistance.toFixed(1)} km
             </p>
           </div>
 
@@ -943,10 +823,7 @@ function ReportsView() {
             </p>
 
             <p className="mt-1 truncate text-xl font-bold text-gray-900 dark:text-white md:text-2xl">
-              {(totals.waterMl / 1000).toFixed(
-                1
-              )}{' '}
-              L
+              {(totals.waterMl / 1000).toFixed(1)} L
             </p>
           </div>
         </section>
@@ -998,8 +875,7 @@ function ReportsView() {
                     strokeDasharray="251.2"
                     strokeDashoffset={
                       251.2 -
-                      (251.2 *
-                        taskCompletion) /
+                      (251.2 * taskCompletion) /
                         100
                     }
                   />
@@ -1026,9 +902,7 @@ function ReportsView() {
                 </p>
 
                 <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                  <CalendarDays
-                    size={14}
-                  />
+                  <CalendarDays size={14} />
                   {activeDays} active days
                 </div>
               </div>
@@ -1069,14 +943,8 @@ function ReportsView() {
                     goals.filter(
                       (goal) =>
                         goal.completed ||
-                        Number(
-                          goal.progress ||
-                            0
-                        ) >=
-                          Number(
-                            goal.target ||
-                              1
-                          )
+                        Number(goal.progress || 0) >=
+                          Number(goal.target || 1)
                     ).length
                   }{' '}
                   / {goals.length}
@@ -1158,10 +1026,7 @@ function ReportsView() {
                     </div>
 
                     <p className="w-12 shrink-0 text-right text-xs font-semibold text-gray-700 dark:text-gray-300">
-                      {Math.round(
-                        day.studyMinutes
-                      )}
-                      m
+                      {Math.round(day.studyMinutes)}m
                     </p>
                   </div>
                 </div>
@@ -1224,10 +1089,7 @@ function ReportsView() {
                       </div>
 
                       <span className="w-16 shrink-0 text-right text-xs font-semibold text-gray-700 dark:text-gray-300">
-                        {day.runDistance.toFixed(
-                          1
-                        )}{' '}
-                        km
+                        {day.runDistance.toFixed(1)} km
                       </span>
                     </div>
                   </div>
@@ -1242,10 +1104,7 @@ function ReportsView() {
                 </p>
 
                 <p className="mt-1 font-bold text-gray-900 dark:text-white">
-                  {totals.runDistance.toFixed(
-                    1
-                  )}{' '}
-                  km
+                  {totals.runDistance.toFixed(1)} km
                 </p>
               </div>
 
@@ -1255,10 +1114,7 @@ function ReportsView() {
                 </p>
 
                 <p className="mt-1 font-bold text-gray-900 dark:text-white">
-                  {Math.round(
-                    totals.runCalories
-                  )}{' '}
-                  kcal
+                  {Math.round(totals.runCalories)} kcal
                 </p>
               </div>
             </div>
@@ -1333,13 +1189,8 @@ function ReportsView() {
                       </div>
 
                       <span className="w-12 shrink-0 text-right text-xs font-semibold text-gray-700 dark:text-gray-300">
-                        {
-                          day.completedTasks
-                        }
-                        /
-                        {
-                          day.totalTasks
-                        }
+                        {day.completedTasks}/
+                        {day.totalTasks}
                       </span>
                     </div>
                   </div>
@@ -1362,21 +1213,16 @@ function ReportsView() {
 
             <p className="mt-3 truncate text-lg font-bold text-gray-900 dark:text-white">
               {bestStudyDay &&
-              bestStudyDay.studyMinutes >
-                0
-                ? formatDate(
-                    bestStudyDay.date
-                  )
+              bestStudyDay.studyMinutes > 0
+                ? formatDate(bestStudyDay.date)
                 : 'No study recorded'}
             </p>
 
             {bestStudyDay &&
-              bestStudyDay.studyMinutes >
-                0 && (
+              bestStudyDay.studyMinutes > 0 && (
                 <p className="mt-1 text-xs text-gray-500">
                   {formatDuration(
-                    bestStudyDay.studyMinutes *
-                      60
+                    bestStudyDay.studyMinutes * 60
                   )}{' '}
                   studied
                 </p>
@@ -1394,22 +1240,15 @@ function ReportsView() {
 
             <p className="mt-3 truncate text-lg font-bold text-gray-900 dark:text-white">
               {bestRunDay &&
-              bestRunDay.runDistance >
-                0
-                ? formatDate(
-                    bestRunDay.date
-                  )
+              bestRunDay.runDistance > 0
+                ? formatDate(bestRunDay.date)
                 : 'No run recorded'}
             </p>
 
             {bestRunDay &&
-              bestRunDay.runDistance >
-                0 && (
+              bestRunDay.runDistance > 0 && (
                 <p className="mt-1 text-xs text-gray-500">
-                  {bestRunDay.runDistance.toFixed(
-                    1
-                  )}{' '}
-                  km
+                  {bestRunDay.runDistance.toFixed(1)} km
                 </p>
               )}
           </div>
@@ -1425,8 +1264,7 @@ function ReportsView() {
 
             <p className="mt-3 text-lg font-bold text-gray-900 dark:text-white">
               {formatDuration(
-                totals.studySeconds /
-                  range
+                totals.studySeconds / range
               )}
             </p>
 
@@ -1462,9 +1300,7 @@ function ReportsView() {
               </p>
 
               <p className="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {Math.round(
-                  totals.calories
-                )}
+                {Math.round(totals.calories)}
               </p>
 
               <p className="mt-1 text-[11px] text-gray-400">
@@ -1478,9 +1314,7 @@ function ReportsView() {
               </p>
 
               <p className="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {Math.round(
-                  totals.protein
-                )}
+                {Math.round(totals.protein)}
               </p>
 
               <p className="mt-1 text-[11px] text-gray-400">
@@ -1494,9 +1328,7 @@ function ReportsView() {
               </p>
 
               <p className="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {Math.round(
-                  totals.carbs
-                )}
+                {Math.round(totals.carbs)}
               </p>
 
               <p className="mt-1 text-[11px] text-gray-400">
@@ -1510,9 +1342,7 @@ function ReportsView() {
               </p>
 
               <p className="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {Math.round(
-                  totals.fat
-                )}
+                {Math.round(totals.fat)}
               </p>
 
               <p className="mt-1 text-[11px] text-gray-400">
