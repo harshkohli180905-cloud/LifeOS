@@ -48,7 +48,6 @@ import OnboardingView from './components/OnboardingView';
 
 import {
   getLocalDate,
-  getLocalDayStart,
 } from './lib/date';
 
 type View =
@@ -643,8 +642,6 @@ const historyPopRef = useRef(false);
           const today =
             getLocalDate(new Date())
 
-          const todayStart =
-            getLocalDayStart(new Date())
 
           const [
             studyResult,
@@ -668,10 +665,6 @@ const historyPopRef = useRef(false);
                 .eq(
                   'user_id',
                   user.id,
-                )
-                .gte(
-                  'started_at',
-                  todayStart,
                 ),
 
               supabase
@@ -901,18 +894,27 @@ const historyPopRef = useRef(false);
             habitLogsResult.data ?? [];
 
           const studySeconds =
-            studySessions.reduce(
-              (
-                sum,
-                item,
-              ) =>
-                sum +
-                Number(
-                  item.duration_seconds ??
-                    0,
-                ),
-              0,
-            );
+            studySessions
+              .filter(
+                (item) =>
+                  String(
+                    item.started_at ??
+                      '',
+                  ).slice(0, 10) ===
+                  today,
+              )
+              .reduce(
+                (
+                  sum,
+                  item,
+                ) =>
+                  sum +
+                  Number(
+                    item.duration_seconds ??
+                      0,
+                  ),
+                0,
+              );
 
           const runDistance =
             runs.reduce(

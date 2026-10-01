@@ -15,6 +15,14 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { getLocalDate } from '../lib/date';
 
+const LIFEOS_DATA_EVENT = 'lifeos-data-changed';
+
+function notifyLifeOSDataChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(LIFEOS_DATA_EVENT));
+  }
+}
+
 type Priority = 'low' | 'medium' | 'high';
 
 type TaskCategory =
@@ -222,7 +230,8 @@ function TasksView() {
         setTasks((current) => [data as Task, ...current]);
       }
 
-      closeModal();
+      notifyLifeOSDataChanged();
+    closeModal();
     } catch (error) {
       console.error('Error saving task:', error);
       alert('Could not save the task. Please try again.');
@@ -255,6 +264,8 @@ function TasksView() {
         item.id === task.id ? (data as Task) : item
       )
     );
+
+    notifyLifeOSDataChanged();
   };
 
   const deleteTask = async (taskId: string) => {
@@ -281,6 +292,8 @@ function TasksView() {
     setTasks((current) =>
       current.filter((task) => task.id !== taskId)
     );
+
+    notifyLifeOSDataChanged();
   };
 
   const filteredTasks = useMemo(() => {
