@@ -16,19 +16,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
+    let active = true;
+    let authEventReceived = false;
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      authEventReceived = true;
+      if (!active) return;
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active || authEventReceived) return;
+      if (error) {
+        console.error('Could not restore auth session:', error);
+      }
+      setUser(data.session?.user ?? null);
+      setLoading(false);
+    }).catch((error: unknown) => {
+      if (!active || authEventReceived) return;
+      console.error('Could not restore auth session:', error);
+      setUser(null);
+      setLoading(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signInWithGoogle = async () => {

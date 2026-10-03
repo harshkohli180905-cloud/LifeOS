@@ -130,6 +130,7 @@ export interface StudySession {
 
   subjectName: string;
   topicTitle: string;
+  pagesRead?: number;
 }
 
 /* =========================================================
@@ -176,6 +177,11 @@ export interface Goal {
   unit?: string;
   deadline?: string;
   completed: boolean;
+  periodType?: 'daily' | 'weekly' | 'monthly' | 'custom' | 'long_term';
+  periodStart?: string;
+  periodEnd?: string;
+  trackingType?: 'manual' | 'automatic';
+  metricKey?: string;
 }
 
 /* =========================================================
@@ -318,6 +324,7 @@ export type StudySessionInput = {
   durationMinutes?: number;
 
   date?: string;
+  pagesRead?: number;
 };
 
 export type TaskInput = {
@@ -400,6 +407,11 @@ export type GoalInput = {
   unit?: string;
   deadline?: string;
   completed?: boolean;
+  periodType?: 'daily' | 'weekly' | 'monthly' | 'custom' | 'long_term';
+  periodStart?: string;
+  periodEnd?: string;
+  trackingType?: 'manual' | 'automatic';
+  metricKey?: string;
 };
 
 /* =========================================================
@@ -1441,6 +1453,7 @@ export function LifeOSProvider({
                           ''
                         )
                       : '',
+                  pagesRead: Number(row.pages_read ?? 0),
                 };
               }
             )
@@ -1558,6 +1571,11 @@ export function LifeOSProvider({
                     Boolean(
                       row.completed
                     ),
+                  periodType: row.period_type ?? 'long_term',
+                  periodStart: row.period_start ?? undefined,
+                  periodEnd: row.period_end ?? undefined,
+                  trackingType: row.tracking_type ?? 'manual',
+                  metricKey: row.metric_key ?? undefined,
                 };
               }
             )
@@ -2090,6 +2108,7 @@ export function LifeOSProvider({
 
             duration_seconds:
               durationSeconds,
+            pages_read: Number(session.pagesRead ?? 0),
           })
           .select()
           .single();
@@ -2187,6 +2206,7 @@ export function LifeOSProvider({
 
         topicTitle:
           resolvedTopicTitle,
+        pagesRead: Number(data.pages_read ?? 0),
       };
 
       setStudySessions(
@@ -2505,6 +2525,11 @@ const updateTask = async (id: string, input: TaskInput) => {
         deadline:
           goal.deadline ??
           null,
+        period_type: goal.periodType ?? 'long_term',
+        period_start: goal.periodStart ?? null,
+        period_end: goal.periodEnd ?? null,
+        tracking_type: goal.trackingType ?? 'manual',
+        metric_key: goal.metricKey ?? null,
 
         completed,
       })
@@ -2565,6 +2590,11 @@ const updateTask = async (id: string, input: TaskInput) => {
         Boolean(
           data.completed
         ),
+      periodType: data.period_type ?? 'long_term',
+      periodStart: data.period_start ?? undefined,
+      periodEnd: data.period_end ?? undefined,
+      trackingType: data.tracking_type ?? 'manual',
+      metricKey: data.metric_key ?? undefined,
     };
 
     setGoals(
@@ -2672,6 +2702,11 @@ const updateTask = async (id: string, input: TaskInput) => {
       updatePayload.deadline =
         updates.deadline || null;
     }
+    if (updates.periodType !== undefined) updatePayload.period_type = updates.periodType;
+    if (updates.periodStart !== undefined) updatePayload.period_start = updates.periodStart || null;
+    if (updates.periodEnd !== undefined) updatePayload.period_end = updates.periodEnd || null;
+    if (updates.trackingType !== undefined) updatePayload.tracking_type = updates.trackingType;
+    if (updates.metricKey !== undefined) updatePayload.metric_key = updates.metricKey || null;
 
     updatePayload.completed =
       completed;
@@ -2747,6 +2782,11 @@ const updateTask = async (id: string, input: TaskInput) => {
         Boolean(
           data.completed
         ),
+      periodType: data.period_type ?? 'long_term',
+      periodStart: data.period_start ?? undefined,
+      periodEnd: data.period_end ?? undefined,
+      trackingType: data.tracking_type ?? 'manual',
+      metricKey: data.metric_key ?? undefined,
     };
 
     setGoals(

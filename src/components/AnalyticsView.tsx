@@ -106,10 +106,15 @@ function addDays(date: string, amount: number) {
 function normalizeActivityDate(value: unknown) {
   if (!value) return '';
 
-  const raw = String(value);
-  const match = raw.match(/^\d{4}-\d{2}-\d{2}/);
+  const raw = String(value).trim();
+  // Supabase `date` columns arrive as YYYY-MM-DD and must not be timezone-shifted.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
 
-  return match ? match[0] : raw;
+  // Timestamp columns represent an instant; group them by the user's local day.
+  const timestamp = new Date(raw);
+  if (!Number.isNaN(timestamp.getTime())) return getLocalDate(timestamp);
+
+  return raw;
 }
 
 function formatDateLabel(date: string) {
@@ -120,17 +125,12 @@ function formatDateLabel(date: string) {
 }
 
 function formatHours(seconds: number) {
-  const hours = seconds / 3600;
-
-  if (hours === 0) {
-    return '0 h';
-  }
-
-  if (hours < 10) {
-    return `${hours.toFixed(1)} h`;
-  }
-
-  return `${hours.toFixed(0)} h`;
+  const totalMinutes = Math.max(0, Math.round(seconds / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hr`;
+  return `${hours} hr ${minutes} min`;
 }
 
 function formatLiters(ml: number) {
@@ -270,8 +270,8 @@ function MiniBarChart({
               <div
                 className="w-full max-w-8 rounded-t-md bg-slate-900 transition-all duration-300 dark:bg-white sm:max-w-10"
                 style={{
-                  height: `${height}%`,
-                  minHeight: rawValue > 0 ? '4px' : '0px',
+                  height: `${(height / 100) * 160}px`,
+                  minHeight: rawValue > 0 ? '2px' : '0px',
                 }}
               />
             </div>
@@ -311,13 +311,8 @@ function TrendRow({
           {title}
         </div>
 
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <div
-            className="h-full rounded-full bg-slate-900 dark:bg-white"
-            style={{
-              width: `${Math.min(100, value > 0 ? 100 : 0)}%`,
-            }}
-          />
+        <div className="mt-1 text-[10px] text-slate-400">
+          average per day in selected range
         </div>
       </div>
 
@@ -328,7 +323,7 @@ function TrendRow({
         </div>
 
         <div className="text-[10px] text-slate-400">
-          avg/day
+          average/day
         </div>
       </div>
     </div>

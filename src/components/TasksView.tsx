@@ -44,6 +44,7 @@ type Task = {
   estimated_minutes: number | null;
   created_at?: string;
   updated_at?: string;
+  archived_at?: string | null;
 };
 
 type TaskForm = {
@@ -95,7 +96,7 @@ function TasksView() {
   const [saving, setSaving] = useState(false);
 
   const [filter, setFilter] = useState<
-    'all' | 'active' | 'completed' | 'overdue'
+    'all' | 'active' | 'completed' | 'overdue' | 'archived'
   >('all');
 
   const [categoryFilter, setCategoryFilter] = useState<
@@ -268,6 +269,17 @@ function TasksView() {
     notifyLifeOSDataChanged();
   };
 
+  const extendDeadline = async (task: Task) => {
+    if (!user) return;
+    const base = task.due_date ? new Date(`${task.due_date}T00:00:00`) : new Date();
+    base.setDate(base.getDate() + 1);
+    const dueDate = getLocalDate(base);
+    const { data, error } = await supabase.from('tasks').update({ due_date: dueDate, archived_at: null, updated_at: new Date().toISOString() }).eq('id', task.id).eq('user_id', user.id).select().single();
+    if (error) { console.error('Error extending deadline:', error); return; }
+    setTasks(current => current.map(item => item.id === task.id ? data as Task : item));
+    notifyLifeOSDataChanged();
+  };
+
   const deleteTask = async (taskId: string) => {
     if (!user) return;
 
@@ -296,47 +308,69 @@ function TasksView() {
     notifyLifeOSDataChanged();
   };
 
+  const archiveTask = async (task: Task) => {
+    if (!user) return;
+    const archivedAt = task.archived_at ? null : new Date().toISOString();
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ archived_at: archivedAt, updated_at: new Date().toISOString() })
+      .eq('id', task.id)
+      .eq('user_id', user.id)
+      .select()
+      .single();
+    if (error) { console.error('Error archiving task:', error); return; }
+    setTasks(current => current.map(item => item.id === task.id ? data as Task : item));
+    notifyLifeOSDataChanged();
+  };
+
   const filteredTasks = useMemo(() => {
     let result = [...tasks];
 
     if (filter === 'active') {
-      result = result.filter((task) => !task.completed);
+      result = result.filter((task) => !task.completed && !task.archived_at);
     }
 
     if (filter === 'completed') {
-      result = result.filter((task) => task.completed);
+      result = result.filter((task) => task.completed && !task.archived_at);
     }
 
     if (filter === 'overdue') {
-      result = result.filter((task) => isOverdue(task));
+      result = result.filter((task) => isOverdue(task) && !task.archived_at);
+    }
+
+    if (filter === 'archived') {
+      result = result.filter((task) => Boolean(task.archived_at));
+    } else {
+      result = result.filter((task) => !task.archived_at);
     }
 
     if (categoryFilter !== 'all') {
-      result = result.filter(
-        (task) => task.category === categoryFilter
-      );
+      result = result.filter((task) => task.category === categoryFilter);
     }
+
+    const priorityRank: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
+    result.sort((a, b) => {
+      const pa = priorityRank[a.priority] ?? 3;
+      const pb = priorityRank[b.priority] ?? 3;
+      if (pa !== pb) return pa - pb;
+      if (!a.due_date && !b.due_date) return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      return a.due_date.localeCompare(b.due_date);
+    });
 
     return result;
   }, [tasks, filter, categoryFilter]);
 
-  const completedCount = tasks.filter(
-    (task) => task.completed
-  ).length;
+  const completedCount = tasks.filter((task) => task.completed && !task.archived_at).length;
 
-  const activeCount = tasks.filter(
-    (task) => !task.completed
-  ).length;
+  const activeCount = tasks.filter((task) => !task.completed && !task.archived_at).length;
 
-  const overdueCount = tasks.filter((task) =>
-    isOverdue(task)
-  ).length;
+  const overdueCount = tasks.filter((task) => isOverdue(task) && !task.archived_at).length;
 
   const today = getLocalDate();
 
-const todayTasks = tasks.filter(
-  (task) => task.due_date === today
-).length;
+const todayTasks = tasks.filter((task) => task.due_date === today && !task.archived_at).length;
 
   const priorityClasses: Record<Priority, string> = {
     low: 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400',
@@ -461,6 +495,7 @@ const todayTasks = tasks.filter(
               ['active', 'Active'],
               ['completed', 'Completed'],
               ['overdue', 'Overdue'],
+            ['archived', 'Archived'],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -592,10 +627,26 @@ const todayTasks = tasks.filter(
                           <Pencil size={16} />
                         </button>
 
+                        {isOverdue(task) && (
+                          <button
+                            onClick={() => void extendDeadline(task)}
+                            className="rounded-lg px-2 py-1 text-[11px] font-semibold text-orange-600 hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-500/10"
+                            title="Extend by 1 day"
+                          >
+                            +1 day
+                          </button>
+                        )}
+                        <button
+                          onClick={() => void archiveTask(task)}
+                          className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-white/5 dark:hover:text-white"
+                          title={task.archived_at ? 'Restore' : 'Archive'}
+                        >
+                          <CheckSquare size={16} />
+                        </button>
                         <button
                           onClick={() => deleteTask(task.id)}
                           className="rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-                          title="Delete"
+                          title="Delete permanently"
                         >
                           <Trash2 size={16} />
                         </button>

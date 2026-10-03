@@ -2989,7 +2989,7 @@ focused study sessions.
                     '',
                   );
                 }}
-                className="input"
+                className="input bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
               >
                 <option value="">
                   Select subject
@@ -3029,7 +3029,7 @@ focused study sessions.
                       .value,
                   )
                 }
-                className="input"
+                className="input bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
               >
                 <option value="">
                   No specific topic

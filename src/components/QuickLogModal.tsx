@@ -105,6 +105,9 @@ function QuickLogModal({
   const [studyMinutes, setStudyMinutes] =
     useState('');
 
+  const [studyPages, setStudyPages] =
+    useState('');
+
   /* ---------------- Run ---------------- */
 
   const [runDistance, setRunDistance] =
@@ -219,6 +222,7 @@ function QuickLogModal({
   const resetForm = () => {
     setStudyName('');
     setStudyMinutes('');
+    setStudyPages('');
 
     setRunDistance('');
     setRunMinutes('');
@@ -299,6 +303,7 @@ function QuickLogModal({
             Math.round(
               minutes * 60,
             ),
+          pages_read: Math.max(0, Math.round(Number(studyPages) || 0)),
         });
 
     if (error) {
@@ -743,12 +748,10 @@ function QuickLogModal({
             <StudyForm
               name={studyName}
               minutes={studyMinutes}
-              setName={
-                setStudyName
-              }
-              setMinutes={
-                setStudyMinutes
-              }
+              pages={studyPages}
+              setName={setStudyName}
+              setMinutes={setStudyMinutes}
+              setPages={setStudyPages}
             />
           )}
 
@@ -884,19 +887,12 @@ function QuickLogModal({
  * ===================================================== */
 
 function StudyForm({
-  name,
-  minutes,
-  setName,
-  setMinutes,
+  name, minutes, pages, setName, setMinutes, setPages,
 }: {
-  name: string;
-  minutes: string;
-  setName: (
-    value: string,
-  ) => void;
-  setMinutes: (
-    value: string,
-  ) => void;
+  name: string; minutes: string; pages: string;
+  setName: (value: string) => void;
+  setMinutes: (value: string) => void;
+  setPages: (value: string) => void;
 }) {
   return (
     <div className="space-y-5">
@@ -925,6 +921,15 @@ function StudyForm({
         placeholder="e.g. 60"
         type="number"
         suffix="minutes"
+      />
+
+      <Input
+        label="Pages read"
+        value={pages}
+        onChange={setPages}
+        placeholder="e.g. 20"
+        type="number"
+        suffix="pages"
       />
     </div>
   );
